@@ -33,7 +33,7 @@ swiftc -D CHECK_TOUCH_MOVEMENT App/FlightSimulation.swift App/ModelTouchMovement
 
 | 应用版本 | 主要更新 |
 | --- | --- |
-| 1.4 (13) | 加入代表航线关卡和机场篇、收藏优先选航程、航司和机场情景播报、按机型配置的驾驶舱、地面滑行和跑道轨迹。更新区域正射影像、横竖屏过渡和 3D 悬浮拆分控件。 |
+| 1.4 (13) | 加入代表航线关卡和机场篇、收藏优先选航程、航司和机场情景播报、按机型配置的驾驶舱、地面滑行和跑道轨迹。更新区域正射影像、横竖屏过渡和 3D 悬浮拆分控件。2026-11-22 已通过 TestFlight 内部测试组分发通用构建。 |
 | 1.3 (12) | 增加独立的地球航线模拟、航前简报和飞行复盘。三维模型改用双指缩放与三指拆合，并增加触控教程。2026-11-22 已通过 TestFlight 内部测试组分发。 |
 | 1.2 (11) | 全面采用双主题。按宽度适配机场展示、模型侧栏和互动飞行控制，并提供系统跟随、本机外观选项和多风格离线中文旁白。iOS/iPadOS 27.2 模拟器以 iPhone 17 Pro、iPhone SE（第三代）、13 英寸 iPad Pro 和 11 英寸 iPad Air 验证横竖屏、较大辅助字号及连续触控。两份设备构建均通过签名及资源校验。使用 [UI UX Pro Max 的 SwiftUI、排版和触控指南](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/tree/f76d1653d7467fc11fb9d9d79295a421c92ab958/.claude/skills/ui-ux-pro-max)。 |
 | 1.2 (8) | iPhone 和 iPad 通用构建、触控改进、3D 场景、飞机与机场细节、原生航班详情、航线探索及中国大陆 App Store 审查配置。使用 iOS/iPadOS 27.2 模拟器验收并生成两份开发签名预览包。尚未提交分发。 |

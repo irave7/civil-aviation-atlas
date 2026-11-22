@@ -14,9 +14,7 @@ final class FlightSimulatorCockpitUITests: XCTestCase {
         app.launch()
         let onPad = UIDevice.current.userInterfaceIdiom == .pad
         XCUIDevice.shared.orientation = onPad ? .landscapeLeft : .portrait
-        let entry = app.buttons["entry-flight-simulator"].firstMatch
-        if !entry.exists || !entry.isHittable { tap(app.buttons["atlas-sidebar-toggle"].firstMatch) }
-        tap(entry)
+        app.openAtlasExploration()
         tap(app.buttons["exploration-route-PEK"].firstMatch)
 
         let voice = app.buttons["simulator-narration"].firstMatch
@@ -100,9 +98,7 @@ final class FlightSimulatorCockpitUITests: XCTestCase {
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
         XCUIDevice.shared.orientation = UIDevice.current.userInterfaceIdiom == .pad ? .landscapeLeft : .portrait
-        let entry = app.buttons["entry-flight-simulator"].firstMatch
-        if !entry.exists || !entry.isHittable { tap(app.buttons["atlas-sidebar-toggle"].firstMatch) }
-        tap(entry)
+        app.openAtlasExploration()
         tap(app.buttons["exploration-route-PEK"].firstMatch)
         tap(app.buttons["simulator-options"].firstMatch)
         tap(item("simulator-cabin-announcements", in: app))

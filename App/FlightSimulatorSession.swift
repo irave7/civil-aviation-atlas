@@ -26,9 +26,9 @@ struct FlightSimulatorSession: View {
     @State private var scenario = Scenario.calm
     @State private var observedWind: ObservedWind?
     @State private var running = false
-    @State private var assisted = false
+    @State private var assisted = true
     @State private var accelerated = false
-    @State private var speaker = ExplorationNarrator()
+    @State private var voiceInteraction = FlightVoiceInteraction()
     @State private var lastBroadcast: ExplorationNarrationCue?
     @State private var lastCabinBroadcast: FlightCabinVoice?
     @State private var cabinPreview: FlightCabinVoice?
@@ -69,12 +69,13 @@ struct FlightSimulatorSession: View {
     }
 
     private enum Panel: Identifiable {
-        case weather, aircraftType, cabin, paint, imagery(Airport)
+        case weather, aircraftType, voice, cabin, paint, imagery(Airport)
 
         var id: String {
             switch self {
             case .weather: "weather"
             case .aircraftType: "aircraft-type"
+            case .voice: "voice"
             case .cabin: "cabin"
             case .paint: "paint"
             case .imagery(let airport): "imagery-\(airport.id)"
@@ -108,6 +109,11 @@ struct FlightSimulatorSession: View {
     private var isArrival: Bool { [.approach, .landing, .arrived].contains(simulation.phase) }
     private var isTaxiing: Bool { simulation.groundStage == .taxiOut || simulation.groundStage == .taxiIn }
     private var activeRunwayName: String? { (isArrival ? endRunway : startRunway)?.id }
+    private var allowsFlightAudio: Bool { sheet == nil || sheet?.id == Panel.voice.id }
+    private var heightAboveGround: Double {
+        let fieldElevation = (isArrival ? leg.end.elevationFt : leg.start.elevationFt) ?? 0
+        return simulation.onGround ? 0 : max(0, (simulation.altitude - Double(fieldElevation)) * 0.3048)
+    }
     private var activeCabinVoice: FlightCabinVoice? {
         switch cabinVoice {
         case .off: nil
@@ -220,7 +226,7 @@ struct FlightSimulatorSession: View {
             if enabled {
                 announce()
             } else {
-                speaker.stop()
+                voiceInteraction.stop(clear: true)
                 lastBroadcast = nil
                 lastCabinBroadcast = nil
             }
@@ -237,7 +243,7 @@ struct FlightSimulatorSession: View {
         .onChange(of: sheet?.id) { previous, current in
             updateSound()
             if previous == Panel.cabin.id && current == nil {
-                speaker.stop()
+                voiceInteraction.stop(clear: false)
                 cabinPreview = nil
                 if simulation.phase == .briefing || simulation.phase == .arrived { announce() }
             }
@@ -256,7 +262,7 @@ struct FlightSimulatorSession: View {
             }
         }
         .onDisappear {
-            speaker.stop()
+            voiceInteraction.stop(clear: true)
             sound.stop()
         }
     }
@@ -303,10 +309,16 @@ struct FlightSimulatorSession: View {
                     FlightExplorationAircraft(profile: profile, livery: livery, progress: simulation.progress,
                                               pitch: simulation.effectivePitch, bank: simulation.effectiveBank,
                                               gearDown: simulation.gearDown, flaps: simulation.flaps,
-                                              showsBackdrop: terrainReady != .exterior)
+                                              showsBackdrop: terrainReady != .exterior,
+                                              altitudeMeters: heightAboveGround, speedKnots: simulation.groundSpeedKnots,
+                                              groundDistanceMeters: simulation.taxiDistanceM + simulation.runwayUsed + simulation.landingRollM)
                         .allowsHitTesting(false)
                         .accessibilityIdentifier("simulator-exterior-view")
                         .zIndex(1)
+                }
+                .overlay(alignment: .top) {
+                    FlightExteriorOverlay(altitudeFeet: simulation.altitude, speedKnots: simulation.groundSpeedKnots)
+                        .padding(10)
                 }
                 .transition(.opacity)
             }
@@ -317,9 +329,7 @@ struct FlightSimulatorSession: View {
     private func terrain(for view: Camera) -> some View {
         #if !MAINLAND_DISTRIBUTION || MAINLAND_APPROVED_MAPS
         if DistributionPolicy.mapsAvailable, leg.start.hasCoordinates, leg.end.hasCoordinates {
-            let fieldElevation = (isArrival ? leg.end.elevationFt : leg.start.elevationFt) ?? 0
-            let height = simulation.onGround ? 0 : (simulation.altitude - Double(fieldElevation)) * 0.3048
-            FlightSimulatorBackdrop(pose: sceneryPose, heightMeters: max(0, height),
+            FlightSimulatorBackdrop(pose: sceneryPose, heightMeters: heightAboveGround,
                                     viewpoint: view == .cockpit ? .cockpit : .exterior) {
                 if camera == view { terrainReady = view }
             }
@@ -391,6 +401,7 @@ struct FlightSimulatorSession: View {
                                     profile: profile, livery: livery, usesReferenceAircraft: usesReferenceAircraft,
                                     departureRunways: departureOptions, destinationRunways: arrivalOptions,
                                     departureRunway: $departure, destinationRunway: $arrival,
+                                    guided: $assisted,
                                     windLabel: windLabel, showWeather: { present(.weather) },
                                     chooseAircraft: { present(.aircraftType) },
                                     showImagery: { present(.imagery($0)) })
@@ -458,14 +469,18 @@ struct FlightSimulatorSession: View {
                         HStack {
                             holdButton
                             rateButton
+                            voiceButton
                         }
                         VStack(alignment: .leading) {
-                            holdButton
-                            rateButton
+                            HStack {
+                                holdButton
+                                rateButton
+                            }
+                            voiceButton
                         }
                     }
-                    Toggle("辅助驾驶", isOn: $assisted)
-                        .accessibilityHint("按当前阶段调整模拟操纵，用于学习操作顺序")
+                    Toggle("导览操作", isOn: $assisted)
+                        .accessibilityHint("开启后由飞机示范操作。关闭后可以手动接手。")
                         .accessibilityIdentifier("simulator-assist")
                     if simulation.canGoAround {
                         Button("复飞", systemImage: "airplane.departure") { simulation.goAround() }
@@ -619,6 +634,7 @@ struct FlightSimulatorSession: View {
         Menu("模拟选项", systemImage: "ellipsis.circle") {
             if profile != nil {
                 Button("自定义涂装", systemImage: "paintpalette") { present(.paint) }
+                    .accessibilityIdentifier("simulator-open-livery")
             }
             if simulation.phase == .briefing {
                 Button("选择模拟机型", systemImage: "airplane") { present(.aircraftType) }
@@ -629,18 +645,24 @@ struct FlightSimulatorSession: View {
                 Button("抵达机场实景", systemImage: "airplane.arrival") { present(.imagery(leg.end)) }
             }
             Button(weatherTitle, systemImage: "cloud.sun") { present(.weather) }
+                .accessibilityIdentifier("simulator-open-weather")
             Toggle("环境与设备音效", isOn: $effects)
                 .accessibilityIdentifier("simulator-effects")
+            Button("语音互动", systemImage: "waveform.bubble") { sheet = .voice }
+                .accessibilityIdentifier("simulator-open-voice")
             Button("航司广播", systemImage: "airplane.circle") { present(.cabin) }
                 .accessibilityIdentifier("simulator-cabin-announcements")
-            Picker("语音风格", selection: $voice) {
-                ForEach(ExplorationVoice.allCases) { Text($0.selectorTitle).tag($0) }
-            }
             if simulation.phase != .briefing {
                 Button("重开航程", systemImage: "arrow.counterclockwise", action: reset)
             }
         }
         .accessibilityIdentifier("simulator-options")
+    }
+
+    private var voiceButton: some View {
+        Button("语音互动", systemImage: "waveform.bubble") { sheet = .voice }
+            .buttonStyle(.glass)
+            .accessibilityIdentifier("simulator-flight-voice")
     }
 
     private var narrationButton: some View {
@@ -701,6 +723,27 @@ struct FlightSimulatorSession: View {
             }
         case .cabin:
             sheetPage("航司广播") { cabinSettings }
+        case .voice:
+            sheetPage("语音互动") {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        Picker("语音风格", selection: $voice) {
+                            ForEach(ExplorationVoice.allCases) { style in
+                                Text(style.selectorTitle).tag(style)
+                                    .accessibilityIdentifier("simulator-voice-style-\(style.rawValue)")
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("simulator-voice-style")
+                        FlightVoiceDeck(interaction: voiceInteraction, narration: $narration, sound: sound,
+                                        questions: FlightVoiceQuestion.flightQuestions(for: simulation,
+                                                    origin: leg.start.displayName, destination: leg.end.displayName))
+                    }
+                    .padding(14)
+                }
+                .accessibilityIdentifier("simulator-voice-scroll")
+                .background(palette.page)
+            }
         case .paint:
             if let profile {
                 ExplorationLiveryEditor(profile: profile, baseline: originalLivery) { selection in
@@ -742,7 +785,7 @@ struct FlightSimulatorSession: View {
                 if let carrier = activeCabinVoice, let sample = carrier.recording(for: .briefing) {
                     Button("试听航前广播", systemImage: "play.circle") {
                         cabinPreview = nil
-                        speaker.previewCabin(sample) {
+                        voiceInteraction.previewCabin(sample) {
                             Task { @MainActor in
                                 if sheet?.id == Panel.cabin.id && activeCabinVoice == carrier { cabinPreview = carrier }
                             }
@@ -762,7 +805,7 @@ struct FlightSimulatorSession: View {
 
     private func cabinChoice(_ choice: FlightCabinVoice) -> some View {
         Button {
-            speaker.stop()
+            voiceInteraction.stop(clear: false)
             cabinPreview = nil
             lastCabinBroadcast = nil
             cabinVoice = choice
@@ -832,7 +875,7 @@ struct FlightSimulatorSession: View {
 
     private func reset() {
         pause()
-        assisted = false
+        voiceInteraction.stop(clear: true)
         routeVoice = routeVoice.nextFlight()
         lastBroadcast = nil
         lastCabinBroadcast = nil
@@ -841,7 +884,7 @@ struct FlightSimulatorSession: View {
 
     private func pause() {
         running = false
-        speaker.stop()
+        voiceInteraction.stop(clear: false)
         sound.stop()
     }
 
@@ -861,32 +904,32 @@ struct FlightSimulatorSession: View {
     }
 
     private func announce() {
-        guard narration, scenePhase == .active, sheet == nil else { return }
+        guard narration, scenePhase == .active, allowsFlightAudio else { return }
         let cue = narrationCue
         let carrier = activeCabinVoice
         let cabin = FlightCabinVoice.Phase(cue: cue).flatMap { carrier?.recording(for: $0) }
         let localAudio = routeNarration
             ? (cue == .briefing ? challenge?.introductionAudio : nil) ?? routeVoice.recording(for: cue, leg: leg) : nil
-        let localText = routeNarration ? routeVoice.spokenText(for: cue, leg: leg) : nil
-        speaker.speak(cue, voice: voice, fallback: localText ?? simulation.instruction,
-                      audibleInSilentMode: true, routeRecording: localAudio, followedBy: cabin, onCabinStarted: {
-            Task { @MainActor in
-                if narration && cue == narrationCue && carrier == activeCabinVoice { lastCabinBroadcast = carrier }
-            }
-        }) {
-            Task { @MainActor in
-                if narration && cue == narrationCue { lastBroadcast = cue }
-            }
-        }
+        let localText = routeNarration
+            ? (cue == .briefing ? challenge?.introduction : nil) ?? routeVoice.spokenText(for: cue, leg: leg) : nil
+        voiceInteraction.play(cue, voice: voice, text: localText ?? simulation.instruction,
+                              recording: localAudio, cabin: cabin, cabinTitle: carrier?.title, sound: sound,
+                              onStarted: {
+                                  if narration && cue == narrationCue { lastBroadcast = cue }
+                              }, onCabinStarted: {
+                                  if narration && cue == narrationCue && carrier == activeCabinVoice {
+                                      lastCabinBroadcast = carrier
+                                  }
+                              })
     }
 
     private func play(_ effect: FlightSimulatorSound.Effect) {
-        guard effects, scenePhase == .active, sheet == nil else { return }
+        guard effects, scenePhase == .active, allowsFlightAudio else { return }
         sound.play(effect)
     }
 
     private func updateSound() {
-        guard effects, scenePhase == .active, sheet == nil else {
+        guard effects, scenePhase == .active, allowsFlightAudio else {
             sound.stop()
             return
         }

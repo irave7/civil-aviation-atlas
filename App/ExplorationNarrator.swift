@@ -49,77 +49,127 @@ enum ExplorationNarrationCue: String, CaseIterable, Sendable {
 
 /// Audio preparation and system voice discovery run outside the rendering and touch thread.
 final class ExplorationNarrator: @unchecked Sendable {
+    enum Channel: Sendable { case guide, cabin }
+
+    enum Event: Sendable {
+        case playing(Channel)
+        case paused
+        case finished
+        case unavailable
+    }
+
+    private struct Playback {
+        let revision: Int
+        let observer: (@Sendable (Event) -> Void)?
+        let onPlaybackStarted: (@Sendable () -> Void)?
+        let onCabinStarted: (@Sendable () -> Void)?
+        var cabin: URL?
+        var channel: Channel = .guide
+        var started = false
+        var paused = false
+        var startupDeadline = ContinuousClock.now + .seconds(3)
+    }
+
     private let queue = DispatchQueue(label: "aviation.atlas.narration", qos: .userInitiated)
     private let revision = OSAllocatedUnfairLock(initialState: 0)
     private var synthesizer: AVSpeechSynthesizer?
     private var player: AVAudioPlayer?
+    private var playback: Playback?
+    private var monitor: DispatchSourceTimer?
 
     func speak(_ cue: ExplorationNarrationCue, voice: ExplorationVoice, fallback text: String,
                audibleInSilentMode: Bool = false, routeRecording: URL? = nil, followedBy cabin: URL? = nil,
+               observe: (@Sendable (Event) -> Void)? = nil,
                onCabinStarted: (@Sendable () -> Void)? = nil, onPlaybackStarted: (@Sendable () -> Void)? = nil) {
+        let recording = voice == .system ? nil : routeRecording ?? audioURL(for: cue, voice: voice)
+        begin(recording: recording, text: text, cabin: cabin, audibleInSilentMode: audibleInSilentMode,
+              observe: observe, onPlaybackStarted: onPlaybackStarted, onCabinStarted: onCabinStarted)
+    }
+
+    func speakAnswer(_ text: String, observe: @escaping @Sendable (Event) -> Void) {
+        begin(recording: nil, text: text, cabin: nil, audibleInSilentMode: true,
+              observe: observe, onPlaybackStarted: nil, onCabinStarted: nil)
+    }
+
+    private func begin(recording: URL?, text: String, cabin: URL?, audibleInSilentMode: Bool,
+                       observe: (@Sendable (Event) -> Void)?,
+                       onPlaybackStarted: (@Sendable () -> Void)?, onCabinStarted: (@Sendable () -> Void)?) {
         let request = invalidate()
         queue.async { [self] in
-            guard revision.withLock({ $0 == request }) else { return }
+            guard isCurrent(request) else { return }
             stopCurrentAudio()
-            let session = AVAudioSession.sharedInstance()
-            if audibleInSilentMode {
-                try? session.setCategory(.playback, mode: .default, options: .mixWithOthers)
-                try? session.setActive(true)
+            prepareAudioSession(audibleInSilentMode: audibleInSilentMode)
+            guard isCurrent(request) else { return }
+            playback = Playback(revision: request, observer: observe, onPlaybackStarted: onPlaybackStarted,
+                                onCabinStarted: onCabinStarted, cabin: cabin)
+            if let recording, playFile(recording, request: request) {
+                didBeginPart()
+                startMonitor()
+            } else if isCurrent(request), !text.isEmpty, let systemVoice = AVSpeechSynthesisVoice(language: "zh-CN") {
+                let engine = synthesizer ?? AVSpeechSynthesizer()
+                synthesizer = engine
+                let message = AVSpeechUtterance(string: text)
+                message.voice = systemVoice
+                message.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95
+                engine.speak(message)
+                checkPlayback()
+                if playback != nil { startMonitor() }
             } else {
-                try? session.setCategory(.ambient)
+                advancePlayback(initiallyUnavailable: true)
             }
-
-            if voice != .system,
-               let file = routeRecording ?? audioURL(for: cue, voice: voice),
-               let clip = try? AVAudioPlayer(contentsOf: file) {
-                guard revision.withLock({ $0 == request }) else { return }
-                player = clip
-                if clip.play() {
-                    onPlaybackStarted?()
-                    if let cabin {
-                        enqueueCabin(cabin, after: clip.duration + 0.18, request: request, onStarted: onCabinStarted)
-                    }
-                    return
-                }
-                player = nil
-            }
-
-            guard revision.withLock({ $0 == request }) else { return }
-            guard let systemVoice = AVSpeechSynthesisVoice(language: "zh-CN") else {
-                if let cabin { playCabin(cabin, request: request, onStarted: onCabinStarted) }
-                return
-            }
-            guard revision.withLock({ $0 == request }) else { return }
-
-            let engine = synthesizer ?? AVSpeechSynthesizer()
-            synthesizer = engine
-            let message = AVSpeechUtterance(string: text)
-            message.voice = systemVoice
-            message.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95
-            engine.speak(message)
-            if engine.isSpeaking { onPlaybackStarted?() }
-            if let cabin { enqueueCabin(cabin, after: 0.4, request: request, onStarted: onCabinStarted) }
         }
     }
 
     func previewCabin(_ url: URL, onStarted: (@Sendable () -> Void)? = nil) {
         let request = invalidate()
         queue.async { [self] in
-            guard revision.withLock({ $0 == request }) else { return }
+            guard isCurrent(request) else { return }
             stopCurrentAudio()
-            let session = AVAudioSession.sharedInstance()
-            try? session.setCategory(.playback, mode: .default, options: .mixWithOthers)
-            try? session.setActive(true)
-            playCabin(url, request: request, onStarted: onStarted)
+            prepareAudioSession(audibleInSilentMode: true)
+            if playFile(url, request: request) { onStarted?() }
+        }
+    }
+
+    func pause() {
+        let request = revision.withLock { $0 }
+        queue.async { [self] in
+            guard isCurrent(request), playback?.revision == request, playback?.paused == false else { return }
+            player?.pause()
+            synthesizer?.pauseSpeaking(at: .immediate)
+            playback?.paused = true
+            cancelMonitor()
+            playback?.observer?(.paused)
+        }
+    }
+
+    func resume() {
+        let request = revision.withLock { $0 }
+        queue.async { [self] in
+            guard isCurrent(request), playback?.revision == request, playback?.paused == true else { return }
+            playback?.paused = false
+            playback?.startupDeadline = ContinuousClock.now + .seconds(3)
+            if let player { player.play() } else { synthesizer?.continueSpeaking() }
+            if let current = playback, current.started { current.observer?(.playing(current.channel)) }
+            startMonitor()
         }
     }
 
     func stop() {
         let request = invalidate()
         queue.async { [self] in
-            if revision.withLock({ $0 == request }) {
-                stopCurrentAudio()
+            if isCurrent(request) { stopCurrentAudio() }
+        }
+    }
+
+    private func prepareAudioSession(audibleInSilentMode: Bool) {
+        let session = AVAudioSession.sharedInstance()
+        if audibleInSilentMode {
+            if session.category != .playback || !session.categoryOptions.contains(.mixWithOthers) {
+                try? session.setCategory(.playback, mode: .default, options: .mixWithOthers)
             }
+            try? session.setActive(true)
+        } else if session.category != .ambient {
+            try? session.setCategory(.ambient)
         }
     }
 
@@ -132,29 +182,71 @@ final class ExplorationNarrator: @unchecked Sendable {
     }
 
     private func stopCurrentAudio() {
+        cancelMonitor()
+        playback = nil
         player?.stop()
         player = nil
         synthesizer?.stopSpeaking(at: .immediate)
     }
 
-    private func enqueueCabin(_ url: URL, after seconds: TimeInterval, request: Int,
-                              onStarted: (@Sendable () -> Void)?) {
-        queue.asyncAfter(deadline: .now() + seconds) { [self] in
-            guard revision.withLock({ $0 == request }) else { return }
-            if player?.isPlaying == true || synthesizer?.isSpeaking == true {
-                enqueueCabin(url, after: 0.25, request: request, onStarted: onStarted)
-            } else {
-                playCabin(url, request: request, onStarted: onStarted)
-            }
+    private func startMonitor() {
+        guard monitor == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(125), repeating: .milliseconds(125), leeway: .milliseconds(30))
+        timer.setEventHandler { [weak self] in self?.checkPlayback() }
+        monitor = timer
+        timer.resume()
+    }
+
+    private func cancelMonitor() {
+        monitor?.cancel()
+        monitor = nil
+    }
+
+    private func checkPlayback() {
+        guard let current = playback, isCurrent(current.revision), !current.paused else { return }
+        let playing = player?.isPlaying ?? (synthesizer?.isSpeaking == true)
+        if playing {
+            if !current.started { didBeginPart() }
+        } else if current.started || ContinuousClock.now >= current.startupDeadline {
+            advancePlayback(initiallyUnavailable: !current.started)
         }
     }
 
-    private func playCabin(_ url: URL, request: Int, onStarted: (@Sendable () -> Void)?) {
-        guard revision.withLock({ $0 == request }), let clip = try? AVAudioPlayer(contentsOf: url),
-              revision.withLock({ $0 == request }) else { return }
-        player = clip
-        if clip.play() { onStarted?() }
+    private func didBeginPart() {
+        guard let current = playback, isCurrent(current.revision), !current.started else { return }
+        playback?.started = true
+        current.observer?(.playing(current.channel))
+        switch current.channel {
+        case .guide: current.onPlaybackStarted?()
+        case .cabin: current.onCabinStarted?()
+        }
     }
+
+    private func advancePlayback(initiallyUnavailable: Bool) {
+        guard let current = playback, isCurrent(current.revision) else { return }
+        if let cabin = current.cabin {
+            playback?.cabin = nil
+            if playFile(cabin, request: current.revision) {
+                playback?.channel = .cabin
+                playback?.started = false
+                didBeginPart()
+                startMonitor()
+                return
+            }
+        }
+        stopCurrentAudio()
+        current.observer?(initiallyUnavailable ? .unavailable : .finished)
+    }
+
+    private func playFile(_ url: URL, request: Int) -> Bool {
+        guard isCurrent(request), let clip = try? AVAudioPlayer(contentsOf: url),
+              isCurrent(request), clip.play() else { return false }
+        player = clip
+        return true
+    }
+
+    private func isCurrent(_ request: Int) -> Bool { revision.withLock { $0 == request } }
 
     private func invalidate() -> Int {
         revision.withLock { value in

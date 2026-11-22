@@ -27,9 +27,8 @@ final class AtlasVisualExplorationUITests: XCTestCase {
             waitForOrientation(second, in: app)
             captureFlight("\(device)-\(theme)-\(name(of: second))", in: app)
 
-            let editorButton = element("exploration-livery-editor", in: app)
-            reveal(editorButton, in: app)
-            editorButton.tap()
+            tap("simulator-options", in: app)
+            tap("simulator-open-livery", in: app)
             captureLivery("\(device)-\(theme)-\(name(of: second))", in: app)
 
             XCUIDevice.shared.orientation = first
@@ -41,37 +40,37 @@ final class AtlasVisualExplorationUITests: XCTestCase {
 
     private func openBundledFlight(in app: XCUIApplication, theme: String) {
         let entry = element("entry-exploration", in: app)
-        if !entry.isHittable { tap("atlas-sidebar-toggle", in: app) }
+        if !entry.exists || !entry.isHittable { tap("atlas-sidebar-toggle", in: app) }
         XCTAssertTrue(entry.waitForExistence(timeout: 12))
         let appearance = element("atlas-appearance", in: app)
         XCTAssertTrue(appearance.waitForExistence(timeout: 12))
         let title = theme == "light" ? "浅色" : "深色"
         XCTAssertTrue(appearance.label.contains(title) || (appearance.value as? String)?.contains(title) == true)
         entry.tap()
+        app.selectExplorationCategory("航线")
         let route = element("exploration-route-PEK", in: app)
         reveal(route, in: app)
         route.tap()
 
-        let mode = app.segmentedControls["exploration-control-mode"]
-        let interactive = mode.buttons["互动飞行"]
-        XCTAssertTrue(interactive.waitForExistence(timeout: 15))
-        interactive.tap()
+        let views = app.segmentedControls["simulator-camera"]
+        let exterior = views.buttons["机外"]
+        XCTAssertTrue(exterior.waitForExistence(timeout: 15))
+        exterior.tap()
     }
 
     private func captureFlight(_ suffix: String, in app: XCUIApplication) {
-        let stage = element("exploration-aircraft-3d", in: app)
-        let instruction = element("exploration-instruction", in: app)
-        let control = app.sliders["exploration-pitch"]
+        let stage = element("simulator-exterior-view", in: app)
+        let instruction = app.staticTexts["飞行简报"].firstMatch
+        let control = element("simulator-exterior-camera", in: app)
         XCTAssertTrue(stage.waitForExistence(timeout: 15))
         XCTAssertTrue(instruction.waitForExistence(timeout: 10))
         XCTAssertTrue(control.waitForExistence(timeout: 10))
         XCTAssertTrue(stage.label.contains("C919"))
-        XCTAssertTrue(instruction.label.contains("北京首都国际机场"))
         assertHorizontalBounds(stage, in: app)
         assertHorizontalBounds(instruction, in: app)
         assertHorizontalBounds(control, in: app)
         if app.frame.width >= 740 {
-            XCTAssertLessThan(stage.frame.midX, control.frame.midX, "宽屏应将飞行画面与操纵区并排")
+            XCTAssertLessThan(stage.frame.midX, instruction.frame.midX, "宽屏应将飞行画面与简报并排")
         }
         attach("exploration-\(suffix)")
     }

@@ -64,7 +64,9 @@ private struct FlightSimulatorTerrainMap: UIViewRepresentable {
         map.delegate = nil
     }
 
-    private var frame: TerrainFrame { TerrainFrame(pose: pose, heightMeters: heightMeters, viewpoint: viewpoint) }
+    private var frame: TerrainFrame {
+        TerrainFrame(pose: pose, heightMeters: heightMeters, viewpoint: viewpoint)
+    }
 
     fileprivate struct TerrainFrame {
         let center: CLLocationCoordinate2D
@@ -76,11 +78,13 @@ private struct FlightSimulatorTerrainMap: UIViewRepresentable {
             let height = heightMeters.isFinite ? min(13_500, max(0, heightMeters)) : 0
             let high = min(1, height / 2_000)
             let isCockpit = viewpoint == .cockpit
-            // A wider low-altitude view keeps the published imagery within useful detail.
-            let eyeHeight = isCockpit ? max(95, height + 18) : max(180, height + 60)
-            let tilt = isCockpit ? 67 - 4 * high : 48 - 5 * high
+            // Keep airport terrain wide enough to stay within the useful detail of the imagery.
+            let eyeHeight = isCockpit ? max(95, height + 18) : max(180, height + 65)
+            let tilt = isCockpit ? 67 - 4 * high : 53 - 8 * high
             let radians = tilt * .pi / 180
-            let course = pose.heading.truncatingRemainder(dividingBy: 360)
+            // Match the rightward route bearing shown by the chase-camera aircraft model.
+            let offset: Double = isCockpit ? 0 : -41
+            let course = (pose.heading + offset).truncatingRemainder(dividingBy: 360)
             heading = course < 0 ? course + 360 : course
             pitch = CGFloat(tilt)
             distance = eyeHeight / cos(radians)

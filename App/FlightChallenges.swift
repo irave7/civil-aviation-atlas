@@ -83,46 +83,28 @@ enum FlightChallengeProgress {
 
 struct FlightChallengeBrowser: View {
     let library: AtlasLibrary
-    let openAirport: (Airport) -> Void
     let onSelect: (FlightChallenge, ExplorationLeg) -> Void
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(FlightChallengeProgress.key) private var completed = ""
     @State private var region = Region.mainland
-    @State private var chapter = Chapter.routes
 
     private enum Region: String, CaseIterable {
         case mainland = "中国大陆", worldwide = "全球"
-    }
-
-    private enum Chapter: String, CaseIterable {
-        case routes = "代表航线", airports = "代表机场"
     }
 
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            Picker("篇章", selection: $chapter) {
-                ForEach(Chapter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("flight-chapter")
             Picker("范围", selection: $region) {
                 ForEach(Region.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("flight-challenge-region")
-
-            Group {
-                if chapter == .routes { routes }
-                else { FlightAirportChapters(library: library, domestic: region == .mainland, openAirport: openAirport) }
-            }
-            .transition(.opacity)
+            routes
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: chapter)
         .task { await library.prepareObservedRoutes() }
     }
 
@@ -152,6 +134,9 @@ struct FlightChallengeBrowser: View {
                                 .foregroundStyle(palette.accent)
                             Text(challenge.introduction)
                                 .font(AtlasTypography.font(.subheadline))
+                                .foregroundStyle(palette.muted)
+                            Text("\(Int(leg.distance.rounded()).formatted()) 公里 · \(challenge.wind.rawValue)")
+                                .font(AtlasTypography.font(.caption))
                                 .foregroundStyle(palette.muted)
                         }
                         Spacer(minLength: 2)

@@ -52,14 +52,12 @@ final class FlightFavoritePickersUITests: XCTestCase {
 
     func testRepresentativeAirportChapterOpensAirport() {
         let app = launchSimulator()
-        tapSecondSegment("exploration-route-mode", label: "航线关卡", in: app)
-        tapSecondSegment("flight-chapter", label: "代表机场", in: app)
+        app.selectExplorationCategory("机场")
         let chapter = app.buttons["flight-airport-chapter-SHA"].firstMatch
-        tap(chapter)
-        XCTAssertEqual(chapter.value as? String, "已展开")
-
         let airport = app.buttons["flight-airport-open-SHA"].firstMatch
-        let content = app.scrollViews["flight-exploration"].firstMatch
+        if !airport.exists { tap(chapter) }
+        XCTAssertTrue(airport.waitForExistence(timeout: 12))
+        let content = app.scrollViews["exploration-airport-scroll"].firstMatch
         for _ in 0..<5 where !airport.isHittable { content.swipeUp(velocity: .slow) }
         screenshot("上海虹桥机场篇章")
         tap(airport)
@@ -74,25 +72,12 @@ final class FlightFavoritePickersUITests: XCTestCase {
         #endif
     }
 
-    private func tapSecondSegment(_ identifier: String, label: String, in app: XCUIApplication) {
-        let picker = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-        XCTAssertTrue(picker.waitForExistence(timeout: 15), "找不到 \(identifier)")
-        let button = picker.buttons[label].firstMatch
-        if button.exists && button.isHittable {
-            button.tap()
-        } else {
-            picker.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
-        }
-    }
-
     private func launchSimulator(with arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"] + arguments
         XCUIDevice.shared.orientation = UIDevice.current.userInterfaceIdiom == .pad ? .landscapeLeft : .portrait
         app.launch()
-        let entry = app.buttons["entry-flight-simulator"].firstMatch
-        if !entry.exists || !entry.isHittable { tap(app.buttons["atlas-sidebar-toggle"].firstMatch) }
-        tap(entry)
+        app.openAtlasExploration()
         return app
     }
 

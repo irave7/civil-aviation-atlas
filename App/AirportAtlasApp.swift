@@ -25,7 +25,6 @@ private enum AtlasDestination: Hashable {
     case airport(String)
     case fleet
     case explore
-    case simulator
     case aircraft(String)
     case gestureGuide
     case privacy
@@ -196,8 +195,7 @@ struct AtlasHome: View {
                 entry(title(for: .globe), symbol: "globe.asia.australia.fill", target: .globe, id: "entry-globe")
                 entry("机场图鉴", symbol: "airplane.arrival", target: .airports, id: "entry-airports")
                 entry("客机图鉴", symbol: "airplane", target: .fleet, id: "entry-aircraft")
-                entry("航线探索", symbol: "point.topleft.down.to.point.bottomright.curvepath", target: .explore, id: "entry-exploration")
-                entry("航线模拟", symbol: "airplane.circle", target: .simulator, id: "entry-flight-simulator")
+                entry("探索", symbol: "safari", target: .explore, id: "entry-exploration")
                 entry("隐私与数据", symbol: "hand.raised", target: .privacy, id: "entry-privacy")
                 entry("触控教程", symbol: "hand.tap", target: .gestureGuide, id: "entry-gesture-guide")
                 if !isPhone { appearanceButton }
@@ -285,8 +283,11 @@ struct AtlasHome: View {
             } else {
                 ContentUnavailableView("机场资料暂不可用", systemImage: "airplane.arrival")
             }
-        case .explore, .simulator:
-            FlightExploration(library: library, favorites: favorites, simulatesFlight: page == .simulator) { navigate(.airport($0.id)) }
+        case .explore:
+            AtlasExplorationHub(library: library, openAirport: { navigate(.airport($0.id)) },
+                                openAircraft: { navigate(.aircraft($0.id)) }) {
+                FlightExploration(library: library, favorites: favorites) { navigate(.airport($0.id)) }
+            }
         case .fleet:
             FleetDirectory(aircraft: library.aircraft) { navigate(.aircraft($0.id)) }
         case .aircraft(let id):
@@ -375,8 +376,7 @@ struct AtlasHome: View {
         case .globe: DistributionPolicy.mapsAvailable ? "地球" : "机场浏览"
         case .airports: "机场图鉴"
         case .airport(let id): library.airport(id)?.displayName ?? "机场"
-        case .explore: "航线探索"
-        case .simulator: "航线模拟"
+        case .explore: "探索"
         case .fleet: "客机图鉴"
         case .aircraft(let id): library.aircraft(id)?.displayName ?? "客机"
         case .gestureGuide: "触控教程"
@@ -409,7 +409,7 @@ struct AtlasHome: View {
         if horizontal == .compact { compactColumn = .detail }
         switch next {
         case .globe, .airport, .aircraft: setImmersive(true)
-        case .favorites, .airports, .fleet, .explore, .simulator, .gestureGuide, .privacy, .sources: setImmersive(false)
+        case .favorites, .airports, .fleet, .explore, .gestureGuide, .privacy, .sources: setImmersive(false)
         }
     }
 

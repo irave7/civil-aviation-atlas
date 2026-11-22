@@ -23,7 +23,6 @@ final class FlightSimulatorUITests: XCTestCase {
         screenshot("上海虹桥至北京首都：飞行简报与航线图")
 
         let start = control("exploration-simulator-start", in: app)
-        let panel = app.scrollViews["simulator-control-scroll"].firstMatch
         tap(start)
 
         let phase = control("simulator-phase", in: app)
@@ -37,7 +36,6 @@ final class FlightSimulatorUITests: XCTestCase {
         wait(for: rate, label: "2×")
 
         let assist = control("simulator-assist", in: app)
-        tap(assist, scrolling: panel, at: CGVector(dx: 0.95, dy: 0.5))
         let assistEnabled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             guard assist.exists else { return false }
             let value = (assist.value as? String) ?? (assist.value as? NSNumber)?.stringValue
@@ -145,9 +143,7 @@ final class FlightSimulatorUITests: XCTestCase {
         app.launch()
         XCUIDevice.shared.orientation = UIDevice.current.userInterfaceIdiom == .phone ? .portrait : .landscapeLeft
 
-        let entry = control("entry-flight-simulator", in: app)
-        if !entry.exists { tap(control("atlas-sidebar-toggle", in: app)) }
-        tap(entry, scrolling: app.scrollViews.firstMatch)
+        app.openAtlasExploration()
         if challenge {
             let selector = app.segmentedControls["exploration-route-mode"].firstMatch
             tap(selector.buttons["航线关卡"].firstMatch)
@@ -168,7 +164,7 @@ final class FlightSimulatorUITests: XCTestCase {
         return app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
-    private func tap(_ target: XCUIElement, scrolling scroll: XCUIElement? = nil, at point: CGVector? = nil) {
+    private func tap(_ target: XCUIElement, scrolling scroll: XCUIElement? = nil) {
         if let scroll {
             for _ in 0..<7 {
                 if target.exists && target.isHittable { break }
@@ -179,11 +175,7 @@ final class FlightSimulatorUITests: XCTestCase {
             target.exists && target.isHittable && target.isEnabled
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 15), .completed, "未找到可点按的控件")
-        if let point {
-            target.coordinate(withNormalizedOffset: point).tap()
-        } else {
-            target.tap()
-        }
+        target.tap()
     }
 
     private func wait(for target: XCUIElement, label: String, timeout: TimeInterval = 15) {

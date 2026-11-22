@@ -7,63 +7,47 @@ final class AtlasFlightFlowUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testGuidedRoutePauseResumeAndArrival() {
+    func testGuidedRoutePausesAndResumes() {
         let app = launchAtlas()
         openShanghaiToBeijing(in: app)
-
-        let phase = control("exploration-phase", in: app)
-        wait(for: phase, labelContaining: "起飞与爬升")
-        let narration = control("exploration-narration", in: app)
-        wait(for: narration, labelContaining: "开启语音")
-        narration.tap()
-        wait(for: narration, labelContaining: "关闭语音")
-        narration.tap()
-        wait(for: narration, labelContaining: "开启语音")
-
-        let playback = control("exploration-playback-control", in: app)
-        tap("exploration-playback-control", in: app, scrolls: true)
-        wait(for: phase, labelContaining: "巡航")
-        tap("exploration-playback-control", in: app)
+        tap("exploration-simulator-start", in: app)
+        wait(for: control("simulator-phase", in: app), labelContaining: "起飞滑跑")
+        let playback = control("simulator-pause", in: app)
+        tap("simulator-pause", in: app)
         wait(for: playback, labelContaining: "继续")
-        XCTAssertFalse(control("exploration-arrival-airport", in: app).exists)
-        tap("exploration-playback-control", in: app)
-        wait(for: phase, labelContaining: "已抵达", timeout: 30)
-        attachScreenshot(app, named: "上海至北京的航线导览抵达")
-        tap("exploration-arrival-airport", in: app, scrolls: true)
-        XCTAssertTrue(control("airport-mode-routes", in: app).waitForExistence(timeout: 20))
-        #if MAINLAND_DISTRIBUTION
-        XCTAssertTrue(control("airport-localized-title", in: app).label.contains("北京"))
-        #else
-        XCTAssertTrue(control("model-viewport", in: app).waitForExistence(timeout: 20))
-        #endif
+        XCTAssertFalse(control("exploration-simulator-arrival-airport", in: app).exists)
+        tap("simulator-pause", in: app)
+        wait(for: playback, labelContaining: "暂停")
+        attachScreenshot(app, named: "上海至北京的导览飞行")
     }
 
     func testInteractiveRouteWaitsForAction() {
         let app = launchAtlas()
         openShanghaiToBeijing(in: app)
-        let mode = app.segmentedControls.matching(identifier: "exploration-control-mode").firstMatch
-        let interactive = mode.buttons["互动飞行"]
-        XCTAssertTrue(interactive.waitForExistence(timeout: 15))
-        interactive.tap()
-        tap("exploration-playback-control", in: app, scrolls: true)
-
-        let takeoff = control("exploration-action-0", in: app)
-        XCTAssertTrue(takeoff.waitForExistence(timeout: 12))
-        XCTAssertFalse(takeoff.isEnabled)
-        XCTAssertFalse(control("exploration-playback-control", in: app).isEnabled)
-        let pitch = app.sliders.matching(identifier: "exploration-pitch").firstMatch
-        reveal(pitch, in: app)
-        XCTAssertTrue(pitch.isHittable)
-        pitch.adjust(toNormalizedSliderPosition: 0.8)
-        tap("exploration-action-0", in: app, scrolls: true)
-        wait(for: control("exploration-action-1", in: app), labelContaining: "收起起落架")
-        attachScreenshot(app, named: "上海至北京互动飞行检查点")
+        let mode = app.segmentedControls["simulator-pilot-style"].firstMatch
+        tap(mode.buttons["手动操纵"].firstMatch, named: "手动操纵", in: app, scrolls: true)
+        tap("exploration-simulator-start", in: app)
+        wait(for: control("simulator-phase", in: app), labelContaining: "起飞滑跑")
+        let throttle = app.sliders["simulator-throttle"].firstMatch
+        reveal(throttle, in: app)
+        XCTAssertTrue(throttle.isHittable && throttle.isEnabled)
+        throttle.adjust(toNormalizedSliderPosition: 0.4)
+        let accelerated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard throttle.exists, let value = throttle.value as? String,
+                  let percent = Int(value.prefix(while: \.isNumber)) else { return false }
+            return percent > 0
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [accelerated], timeout: 10), .completed)
+        attachScreenshot(app, named: "上海至北京手动操纵推力")
     }
 
     func testCustomLiveryAppliesAndRestoresAirlinePaint() {
         let app = launchAtlas()
         openShanghaiToBeijing(in: app)
-        tap("exploration-livery-editor", in: app, scrolls: true)
+        let camera = app.segmentedControls["simulator-camera"].firstMatch
+        tap(camera.buttons["机外"].firstMatch, named: "机外", in: app)
+        tap("simulator-options", in: app)
+        tap("simulator-open-livery", in: app)
         let editor = control("exploration-livery-sheet", in: app)
         XCTAssertTrue(editor.waitForExistence(timeout: 12))
         let pattern = app.descendants(matching: .any)
@@ -72,26 +56,24 @@ final class AtlasFlightFlowUITests: XCTestCase {
         tap(pattern, named: "波浪飘带", in: app, scrolls: true)
         tap("exploration-livery-apply", in: app)
         XCTAssertTrue(editor.waitForNonExistence(timeout: 12))
-        let custom = control("exploration-custom-livery", in: app)
-        wait(for: custom, labelContaining: "我的涂装")
+        let exterior = control("simulator-exterior-view", in: app)
+        wait(for: exterior, labelContaining: "我的涂装")
         attachScreenshot(app, named: "上海至北京自定义涂装")
 
-        tap("exploration-livery-editor", in: app, scrolls: true)
+        tap("simulator-options", in: app)
+        tap("simulator-open-livery", in: app)
         let restore = control("exploration-livery-restore", in: app)
         reveal(restore, in: app)
         wait(for: restore, labelContaining: "恢复航司涂装")
         tap("exploration-livery-restore", in: app)
         XCTAssertTrue(editor.waitForNonExistence(timeout: 12))
-        XCTAssertTrue(custom.waitForNonExistence(timeout: 12))
-        XCTAssertTrue(label(containing: "参考涂装 中国东方航空标准涂装", in: app).exists)
+        wait(for: exterior, labelContaining: "中国东方航空标准涂装")
     }
 
     #if !MAINLAND_DISTRIBUTION
     func testWorldwideExplorationShowsSourceAndA350() {
         let app = launchAtlas()
-        let exploration = control("entry-exploration", in: app)
-        if !exploration.isHittable { tap("atlas-sidebar-toggle", in: app) }
-        tap("entry-exploration", in: app)
+        app.openAtlasExploration()
         let scope = app.segmentedControls.matching(identifier: "exploration-scope").firstMatch
         let worldwide = scope.buttons["全球"]
         XCTAssertTrue(worldwide.waitForExistence(timeout: 15))
@@ -105,8 +87,11 @@ final class AtlasFlightFlowUITests: XCTestCase {
         XCTAssertTrue(rowFrame.width > 0 && rowFrame.height > 0 && appFrame.contains(center))
         app.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: center.x - appFrame.minX, dy: center.y - appFrame.minY)).tap()
-        XCTAssertTrue(control("exploration-aircraft-3d", in: app).waitForExistence(timeout: 15))
-        tap("exploration-reality", in: app, scrolls: true)
+        let camera = app.segmentedControls["simulator-camera"].firstMatch
+        tap(camera.buttons["机外"].firstMatch, named: "机外", in: app)
+        wait(for: control("simulator-exterior-view", in: app), labelContaining: "A350-900")
+        tap("simulator-options", in: app)
+        tap("simulator-open-weather", in: app)
         XCTAssertTrue(control("exploration-reality-panel", in: app).waitForExistence(timeout: 15))
         tap("exploration-reality-fetch", in: app)
         XCTAssertTrue(label(containing: "NOAA 航空气象中心", in: app).waitForExistence(timeout: 20))
@@ -162,9 +147,7 @@ final class AtlasFlightFlowUITests: XCTestCase {
     }
 
     private func openShanghaiToBeijing(in app: XCUIApplication) {
-        let exploration = control("entry-exploration", in: app)
-        if !exploration.isHittable { tap("atlas-sidebar-toggle", in: app) }
-        tap("entry-exploration", in: app)
+        app.openAtlasExploration()
         wait(for: control("exploration-origin", in: app), labelContaining: "SHA")
         tap("exploration-route-PEK", in: app, scrolls: true)
     }

@@ -14,6 +14,7 @@ struct FlightSimulatorBriefing: View {
     let destinationRunways: [Runway]
     @Binding var departureRunway: Runway?
     @Binding var destinationRunway: Runway?
+    @Binding var guided: Bool
     let windLabel: String
     let showWeather: () -> Void
     let chooseAircraft: () -> Void
@@ -27,6 +28,7 @@ struct FlightSimulatorBriefing: View {
     var body: some View {
         VStack(alignment: .leading, spacing: palette.contentGap) {
             routeHeader
+            flightStyle
             aircraftAndSource
             runwaysAndWind
             Text("从起飞滑跑开始，操纵飞机完成爬升、巡航、进近和着陆，再查看飞行记录。")
@@ -89,6 +91,24 @@ struct FlightSimulatorBriefing: View {
                     .font(AtlasTypography.font(.caption))
                     .foregroundStyle(palette.muted)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .atlasPanel(palette)
+    }
+
+    private var flightStyle: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            title("飞行方式")
+            Picker("飞行方式", selection: $guided) {
+                Text("导览飞行").tag(true)
+                Text("手动操纵").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("simulator-pilot-style")
+            Text(guided ? "飞机会示范各阶段的操作。飞行中可随时接手。" : "由你操纵推力、机头姿态、襟翼、起落架和刹车。")
+                .font(AtlasTypography.font(.subheadline))
+                .foregroundStyle(palette.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

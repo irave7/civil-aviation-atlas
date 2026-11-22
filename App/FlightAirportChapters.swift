@@ -10,7 +10,8 @@ struct FlightAirportChapters: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expandedID: String?
+    @SceneStorage("atlas.exploration.selected-airport") private var expandedID: String?
+    @AppStorage(AtlasObservationProgress.airportsKey) private var completed = ""
     @State private var playingID: String?
     @State private var previewSequence = 0
     @State private var previewTask: Task<Void, Never>?
@@ -20,21 +21,23 @@ struct FlightAirportChapters: View {
     private var modelAccess: Bool { DistributionPolicy.airportSiteModelsAvailable }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(domestic ? "中国大陆机场观察" : "全球机场观察")
+        let chapters = (domestic ? AirportChapter.domestic : AirportChapter.global).compactMap { chapter in
+            library.airport(chapter.id).map { (chapter: chapter, airport: $0) }
+        }
+        let marks = AtlasObservationProgress.completed(in: completed)
+        let done = chapters.filter { marks.contains($0.chapter.id) }.count
+        LazyVStack(alignment: .leading, spacing: 12) {
+            Text("机场探索")
                 .font(AtlasTypography.font(.title2, weight: .bold))
                 .foregroundStyle(palette.ink)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("flight-airport-chapters")
-            if DistributionPolicy.isMainlandReview {
-                Text("中国大陆分发版提供机场资料")
-                    .font(AtlasTypography.font(.footnote))
-                    .foregroundStyle(palette.muted)
+            if !chapters.isEmpty {
+                ProgressView("已完成 \(done) / \(chapters.count) 项", value: Double(done), total: Double(chapters.count))
+                    .accessibilityIdentifier("exploration-airport-progress")
             }
-            ForEach(domestic ? AirportChapter.domestic : AirportChapter.global) { chapter in
-                if let airport = library.airport(chapter.id) {
-                    card(chapter, airport: airport)
-                }
+            ForEach(chapters, id: \.airport.id) { entry in
+                card(entry.chapter, airport: entry.airport, isComplete: marks.contains(entry.chapter.id))
             }
         }
         .onDisappear(perform: stopPreview)
@@ -44,7 +47,7 @@ struct FlightAirportChapters: View {
         }
     }
 
-    private func card(_ chapter: AirportChapter, airport: Airport) -> some View {
+    private func card(_ chapter: AirportChapter, airport: Airport, isComplete: Bool) -> some View {
         let expanded = expandedID == chapter.id
         return VStack(alignment: .leading, spacing: 12) {
             Button {
@@ -54,11 +57,17 @@ struct FlightAirportChapters: View {
                 }
             } label: {
                 HStack(alignment: .center, spacing: 12) {
-                    Text(airport.displayCode)
-                        .font(palette.readout(.subheadline, weight: .bold))
-                        .foregroundStyle(palette.selectionInk)
-                        .padding(8)
-                        .background(palette.selection, in: .rect(cornerRadius: 8))
+                    HStack(spacing: 4) {
+                        if isComplete {
+                            Image(systemName: "checkmark.circle.fill")
+                                .accessibilityHidden(true)
+                        }
+                        Text(airport.displayCode)
+                            .font(palette.readout(.subheadline, weight: .bold))
+                    }
+                    .foregroundStyle(palette.selectionInk)
+                    .padding(8)
+                    .background(palette.selection, in: .rect(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(airport.displayName)
                             .font(AtlasTypography.font(.headline, weight: .bold))
@@ -74,14 +83,15 @@ struct FlightAirportChapters: View {
                         .accessibilityHidden(true)
                 }
                 .frame(minHeight: 44)
+                .multilineTextAlignment(.leading)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("flight-airport-chapter-\(chapter.id)")
-            .accessibilityValue(expanded ? "已展开" : "已收起")
+            .accessibilityValue(isComplete ? "已完成" : (expanded ? "已展开" : "已收起"))
 
             if expanded {
-                chapterDetails(chapter, airport: airport)
+                chapterDetails(chapter, airport: airport, isComplete: isComplete)
                     .transition(.opacity)
             }
         }
@@ -89,7 +99,7 @@ struct FlightAirportChapters: View {
         .atlasPanel(palette)
     }
 
-    private func chapterDetails(_ chapter: AirportChapter, airport: Airport) -> some View {
+    private func chapterDetails(_ chapter: AirportChapter, airport: Airport, isComplete: Bool) -> some View {
         let recording = Self.previewURL(for: airport.displayCode)
         return VStack(alignment: .leading, spacing: 11) {
             Text(chapter.idea)
@@ -120,6 +130,14 @@ struct FlightAirportChapters: View {
             .buttonStyle(.bordered)
             .controlSize(.large)
             .tint(palette.accent)
+
+            if let question = chapter.question(for: airport, library: library) {
+                AtlasObservationMission(
+                    id: "airport-\(chapter.id)", question: question, completed: isComplete, palette: palette
+                ) {
+                    completed = AtlasObservationProgress.marking(chapter.id, in: completed)
+                }
+            }
 
             if modelAccess && DistributionPolicy.mapsAvailable {
                 Text("进入机场后可切换到平面图")
@@ -264,6 +282,82 @@ private struct AirportChapter: Identifiable {
         case .terminal:
             let names = airport.terminals?.prefix(2).map(\.name) ?? []
             return names.isEmpty ? nil : names.joined(separator: "、")
+        }
+    }
+
+    @MainActor
+    func question(for airport: Airport, library: AtlasLibrary) -> AtlasObservationQuestion? {
+        let runways = (airport.runways ?? []).filter { $0.lengthM > 0 }
+        switch id {
+        case "SHA":
+            return .init("18 和 36 可以标在什么位置？",
+                         ["同一条跑道的同一端", "同一条跑道的两端", "两座不同的航站楼"], answer: 1,
+                         explanation: "一条跑道的两端方向相反，跑道编号前两位通常相差 18。")
+        case "PEK":
+            return .init("朝同一方向看，平行跑道编号里的 L 代表什么？",
+                         ["左侧", "较长", "末端"], answer: 0,
+                         explanation: "L 是 Left，表示左侧。R 是 Right，表示右侧。")
+        case "PKX":
+            return .init("想粗略判断跑道方向，应先看哪一部分编号？",
+                         ["最后的字母", "机场的三字代码", "跑道编号前两位"], answer: 2,
+                         explanation: "跑道编号前两位乘以 10，可近似表示跑道的磁航向。")
+        case "PVG":
+            let lengths = Set(runways.map { Int($0.lengthM.rounded()) }).sorted()
+            if lengths.count >= 3, let last = lengths.last {
+                return .init("图鉴收录的浦东机场跑道中，最长的一条有多长？",
+                             [lengths[0], last, lengths[1]].map { "\($0.formatted()) 米" }, answer: 1,
+                             explanation: "\(last.formatted()) 米是当前图鉴收录的跑道长度最大值。")
+            }
+            return .init("比较两条跑道的长度，应该看哪个数据？",
+                         ["跑道长度的米数", "航站楼编号", "机场三字代码"], answer: 0,
+                         explanation: "跑道长度通常以米或英尺表示，比较时先换成相同单位。")
+        case "FOC":
+            return .init("从停机坪去起飞跑道，飞机通常沿哪一种道路移动？",
+                         ["旅客到达道路", "滑行道", "登机廊桥"], answer: 1,
+                         explanation: "滑行道连接停机坪和跑道，飞机可沿滑行道在机场地面移动。")
+        case "TFU":
+            if let height = airport.elevationFt, let shanghai = library.airport("SHA")?.elevationFt {
+                let winner = height >= shanghai ? "成都天府" : "上海虹桥"
+                return .init("成都天府和上海虹桥，图鉴中哪座机场的海拔更高？",
+                             ["上海虹桥", "成都天府"], answer: height >= shanghai ? 1 : 0,
+                             explanation: "\(winner)的收录海拔更高。可以在观察卡对比两个数值。")
+            }
+            return .init("机场海拔通常以什么作为高度参考？",
+                         ["航站楼屋顶", "飞机座位", "海平面"], answer: 2,
+                         explanation: "海拔描述地面相对平均海平面的高度。")
+        case "HND":
+            return .init("看跑道编号，04 和 05 两个端头的朝向怎样？",
+                         ["方向相近", "方向相反", "约成直角"], answer: 0,
+                         explanation: "04 约对应 40 度，05 约对应 50 度，朝向相近。")
+        case "SIN":
+            return .init("抵达机场后，在哪里可以确认当前航班的登机口？",
+                         ["交通道路的路牌", "航班信息屏", "行李提取转盘"], answer: 1,
+                         explanation: "航班信息屏按航班号显示出发航班的登机口和状态。")
+        case "JFK":
+            return .init("根据编号粗略估算，04 和 13 两个方向之间相差多少度？",
+                         ["约 10 度", "约 180 度", "约 90 度"], answer: 2,
+                         explanation: "用 130 度减去 40 度，得到约 90 度。")
+        case "LHR":
+            return .init("从编号约为 09 的跑道端起飞，大致朝哪个方向？",
+                         ["东", "西", "北"], answer: 0,
+                         explanation: "09 约对应 90 度磁航向，大致朝东。")
+        case "DXB":
+            let lengths = runways.map { Int($0.lengthM.rounded()) }
+            if let longest = lengths.max(), let shortest = lengths.min(), longest > shortest {
+                let difference = longest - shortest
+                return .init("用图鉴数值计算，最长和最短的跑道相差多少米？",
+                             ["\((difference + 50).formatted()) 米", "\(difference.formatted()) 米", "\((difference * 2).formatted()) 米"], answer: 1,
+                             explanation: "用 \(longest.formatted()) 米减去 \(shortest.formatted()) 米，得到 \(difference.formatted()) 米。")
+            }
+            return .init("怎样算两条跑道相差多少米？",
+                         ["把两个长度相加", "比较跑道编号", "较长的米数减去较短的米数"], answer: 2,
+                         explanation: "用同一单位表示长度，再用较长的数减去较短的数。")
+        case "HKG":
+            return .init("三条平行跑道里，编号带 C 的是哪一条？",
+                         ["左边一条", "中间一条", "右边一条"], answer: 1,
+                         explanation: "C 是 Center，表示方向相同的三条平行跑道中的中间一条。")
+        default:
+            return nil
         }
     }
 

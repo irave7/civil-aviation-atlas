@@ -31,11 +31,13 @@ final class FlightSimulatorSound: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "aviation.atlas.flight-effects", qos: .userInitiated)
     private var layers: [Layer: AVAudioPlayer] = [:]
+    private var targetMix: [Layer: Mix] = [:]
     private var previousMix: [Layer: Mix] = [:]
     private var effects: [Effect: AVAudioPlayer] = [:]
     private var unavailableEffects: Set<Effect> = []
     private var didPrepareLayers = false
     private var isRunning = false
+    private var narrationActive = false
 
     private static func activateSession() {
         let session = AVAudioSession.sharedInstance()
@@ -83,6 +85,18 @@ final class FlightSimulatorSound: @unchecked Sendable {
         queue.async { [self] in playEffect(effect) }
     }
 
+    func setNarrationActive(_ speaking: Bool) {
+        queue.async { [self] in
+            guard narrationActive != speaking else { return }
+            narrationActive = speaking
+            if isRunning {
+                for (layer, mix) in targetMix {
+                    apply(mix, to: layer)
+                }
+            }
+        }
+    }
+
     private func playEffect(_ effect: Effect) {
         guard !unavailableEffects.contains(effect) else { return }
         if effects[effect] == nil {
@@ -96,6 +110,7 @@ final class FlightSimulatorSound: @unchecked Sendable {
         }
         guard let player = effects[effect] else { return }
         if !isRunning { Self.activateSession() }
+        player.volume = effect.volume * (narrationActive ? 0.72 : 1)
         player.currentTime = 0
         player.play()
     }
@@ -106,6 +121,7 @@ final class FlightSimulatorSound: @unchecked Sendable {
 
     private func stopMix() {
         isRunning = false
+        targetMix.removeAll()
         previousMix.removeAll()
         for player in layers.values {
             player.stop()
@@ -135,8 +151,16 @@ final class FlightSimulatorSound: @unchecked Sendable {
     }
 
     private func mix(_ layer: Layer, volume: Float, rate: Float) {
+        let mix = Mix(volume: volume, rate: rate)
+        targetMix[layer] = mix
+        apply(mix, to: layer)
+    }
+
+    private func apply(_ mix: Mix, to layer: Layer) {
         guard let player = layers[layer] else { return }
         let previous = previousMix[layer]
+        let volume = mix.volume * (narrationActive ? 0.34 : 1)
+        let rate = mix.rate
         let volumeChanged = previous.map { abs($0.volume - volume) >= 0.015 || ($0.volume != 0 && volume == 0) } ?? true
         let rateChanged = previous.map { abs($0.rate - rate) >= 0.025 } ?? true
         if volumeChanged { player.setVolume(volume, fadeDuration: 0.12) }

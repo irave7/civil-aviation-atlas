@@ -67,44 +67,55 @@ struct AirportRoutePanel: View {
     let library: AtlasLibrary
     let onAirport: (Airport) -> Void
     let onAircraft: (AircraftProfile) -> Void
-    @State private var showHistory = false
-    @State private var showOpenSchedules = false
-    @State private var showAvinor = false
+    @State private var showFlightDetails = false
+
+    private var subtitle: String {
+        DistributionPolicy.liveFlightsAvailable
+            ? "查询已收录班表和实飞统计。支持的机场还可查询官方航班资料。"
+            : "查阅已收录的班表与历史实飞统计。当前航班以机场和航司公告为准。"
+    }
 
     var body: some View {
         FlightRouteList(
-            title: "\(airport.displayName)航线", subtitle: "查询已收录班表、统计期实飞航线和当前机场航班动态。",
+            title: "\(airport.displayName)航线", subtitle: subtitle,
             routes: library.routes(at: airport) + library.observedRoutes(at: airport), library: library,
             distanceOrder: false, onAirport: onAirport, onAircraft: onAircraft
         ) {
-            if airport.id == "HKG" {
-                Button("香港机场历史航班", systemImage: "clock.arrow.circlepath") { showHistory = true }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("hkg-open-history")
-            }
+            Button("机场航班资料", systemImage: "airplane.departure") { showFlightDetails = true }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("airport-flight-details")
+        }
+        .sheet(isPresented: $showFlightDetails) {
+            AirportFlightBoardSheet(airport: airport, library: library)
+                .presentationSizing(.page)
+        }
+    }
+}
+
+private struct AirportFlightBoardSheet: View {
+    let airport: Airport?
+    let library: AtlasLibrary
+    var context: FlightBoardContext? = nil
+
+    static func supports(_ airport: Airport, day: String) -> Bool {
+        guard DistributionPolicy.liveFlightsAvailable else { return false }
+        return OpenAirportSchedules.supports(airport.iata) || AvinorAirportBoard.supports(airport)
+            || (airport.id == "HKG" && day <= FlightCalendar.lastHongKongHistoricalDay)
+    }
+
+    var body: some View {
+        if DistributionPolicy.liveFlightsAvailable, let airport {
             if OpenAirportSchedules.supports(airport.iata) {
-                Button("桃园机场航班动态", systemImage: "clock") { showOpenSchedules = true }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("tpe-open-schedules")
+                OpenAirportSchedules(airport: airport, library: library, context: context)
+            } else if AvinorAirportBoard.supports(airport) {
+                AvinorAirportBoard(airport: airport, library: library, context: context)
+            } else if airport.id == "HKG", context.map({ $0.day <= FlightCalendar.lastHongKongHistoricalDay }) ?? true {
+                NavigationStack { HongKongFlightHistory(library: library, context: context) }
+            } else {
+                AirportFlightDetails(airport: airport, library: library, context: context)
             }
-            if AvinorAirportBoard.supports(airport) {
-                Button("Avinor 航班动态", systemImage: "clock.arrow.2.circlepath") { showAvinor = true }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("avinor-open-board")
-            }
-            AirportFlightLinks(airport: airport)
-        }
-        .sheet(isPresented: $showHistory) {
-            NavigationStack { HongKongFlightHistory(library: library) }
-                .presentationSizing(.page)
-        }
-        .sheet(isPresented: $showOpenSchedules) {
-            OpenAirportSchedules(airport: airport, library: library)
-                .presentationSizing(.page)
-        }
-        .sheet(isPresented: $showAvinor) {
-            AvinorAirportBoard(airport: airport, library: library)
-                .presentationSizing(.page)
+        } else {
+            AirportFlightDetails(airport: airport, library: library, context: context)
         }
     }
 }
@@ -399,7 +410,7 @@ private func displayDistance(_ km: Double) -> String {
     "\(km.formatted(.number.precision(.fractionLength(0)))) km"
 }
 
-private func localTimeLabel(for route: FlightRoute) -> String? {
+func localTimeLabel(for route: FlightRoute) -> String? {
     switch (route.departureLocal, route.arrivalLocal) {
     case let (departure?, arrival?): "\(departure) → \(arrival) · 当地时间"
     case let (departure?, nil): "\(departure) 离港 · 当地时间"
@@ -416,9 +427,14 @@ struct RouteDetail: View {
     let openAircraft: ((AircraftProfile) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var textSize
+    @State private var showFlightDetails = false
 
     private var origin: Airport? { library.airport(route.origin) }
     private var destination: Airport? { library.airport(route.destination) }
+    private var flightBoardAirport: Airport? {
+        [origin, destination].compactMap { $0 }.first { AirportFlightBoardSheet.supports($0, day: day) }
+            ?? origin ?? destination
+    }
 
     var body: some View {
         GeometryReader { viewport in
@@ -426,16 +442,19 @@ struct RouteDetail: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     endpoints
-                    if wide, let origin, let destination {
-                        HStack(alignment: .top, spacing: 18) {
-                            routeMap(origin: origin, destination: destination, height: 385)
-                                .frame(maxWidth: .infinity)
-                            facts.frame(width: 300)
+                    if DistributionPolicy.mapsAvailable, let origin, let destination,
+                       origin.hasCoordinates, destination.hasCoordinates {
+                        if wide {
+                            HStack(alignment: .top, spacing: 18) {
+                                routeMap(origin: origin, destination: destination, height: 385)
+                                    .frame(maxWidth: .infinity)
+                                facts.frame(width: 300)
+                            }
+                        } else {
+                            routeMap(origin: origin, destination: destination, height: 250)
+                            facts
                         }
                     } else {
-                        if let origin, let destination {
-                            routeMap(origin: origin, destination: destination, height: 250)
-                        }
                         facts
                     }
                     if let sources = route.observedStatistics?.map(\.source) {
@@ -459,9 +478,19 @@ struct RouteDetail: View {
         }
         .navigationTitle(route.flightNumber ?? "航线详情")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showFlightDetails) {
+            let airport = flightBoardAirport
+            let context = FlightBoardContext(route: route, day: day, airportID: airport?.id ?? route.origin)
+            AirportFlightBoardSheet(airport: airport, library: library, context: context)
+                .presentationSizing(.page)
+        }
         .toolbar {
-            if let modelID = route.aircraftID, let model = library.aircraft(modelID), let openAircraft {
-                ToolbarItem(placement: .topBarLeading) {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                if route.flightNumber != nil {
+                    Button("查看航班资料", systemImage: "airplane") { showFlightDetails = true }
+                        .accessibilityIdentifier("route-flight-details")
+                }
+                if let modelID = route.aircraftID, let model = library.aircraft(modelID), let openAircraft {
                     Button("查看客机", systemImage: "cube") { openAircraft(model) }
                         .accessibilityLabel("查看 \(model.displayName) 三维模型")
                         .accessibilityIdentifier("route-aircraft-\(modelID)")
@@ -519,26 +548,23 @@ struct RouteDetail: View {
 
     private var plannedFacts: some View {
         VStack(alignment: .leading, spacing: 10) {
-                Text(route.airline).font(AtlasTypography.font(.headline))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(route.status == "计划班表" ? "计划机型" : "资料所列机型")
-                        .font(AtlasTypography.font(.caption)).foregroundStyle(.secondary)
-                    Text([route.displayAircraftName, route.aircraftVariant].compactMap { $0 }.joined(separator: " · "))
-                        .font(AtlasTypography.font(.subheadline))
-                }
-                Divider()
-                if let time = localTimeLabel(for: route) {
-                    Label(time, systemImage: "clock").monospacedDigit()
-                }
-                if let from = route.validFrom, let through = route.validThrough {
-                    Label("\(from) 至 \(through)", systemImage: "calendar")
-                }
-                if let frequency = route.frequency {
-                    Label(frequency, systemImage: "repeat")
-                }
-                if let number = route.flightNumber, let url = AirportFlightLinks.flightURL(number) {
-                    Link(destination: url) { Label("查询该航班动态", systemImage: "arrow.up.right.square") }
-                }
+            Text(route.airline).font(AtlasTypography.font(.headline))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(route.status == "计划班表" ? "计划机型" : "资料所列机型")
+                    .font(AtlasTypography.font(.caption)).foregroundStyle(.secondary)
+                Text([route.displayAircraftName, route.aircraftVariant].compactMap { $0 }.joined(separator: " · "))
+                    .font(AtlasTypography.font(.subheadline))
+            }
+            Divider()
+            if let time = localTimeLabel(for: route) {
+                Label(time, systemImage: "clock").monospacedDigit()
+            }
+            if let from = route.validFrom, let through = route.validThrough {
+                Label("\(from) 至 \(through)", systemImage: "calendar")
+            }
+            if let frequency = route.frequency {
+                Label(frequency, systemImage: "repeat")
+            }
         }
     }
 
@@ -616,14 +642,26 @@ enum FlightCalendar {
         return value
     }
 
-    static func isoDate(_ date: Date) -> String {
-        let value = calendar.dateComponents([.year, .month, .day], from: date)
+    static func isoDate(_ date: Date, in timeZone: TimeZone = hongKongZone) -> String {
+        var localCalendar = calendar
+        localCalendar.timeZone = timeZone
+        let value = localCalendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", value.year ?? 0, value.month ?? 0, value.day ?? 0)
+    }
+
+    static var lastHongKongHistoricalDate: Date { calendar.date(byAdding: .day, value: -1, to: .now) ?? .now }
+    static var lastHongKongHistoricalDay: String { isoDate(lastHongKongHistoricalDate) }
+
+    static func hongKongDate(for day: String) -> Date? {
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
     }
 }
 
 private struct HongKongFlightHistory: View {
     let library: AtlasLibrary
+    let context: FlightBoardContext?
 
     private struct Batch: Decodable {
         let date: String
@@ -640,25 +678,37 @@ private struct HongKongFlightHistory: View {
     }
 
     @Environment(\.dismiss) private var dismiss
-    @State private var date = FlightCalendar.calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
-    @State private var arrival = false
+    @State private var date: Date
+    @State private var arrival: Bool
     @State private var movements: [Movement] = []
     @State private var loading = true
     @State private var failed = false
     @State private var revision = 0
 
+    init(library: AtlasLibrary, context: FlightBoardContext? = nil) {
+        self.library = library
+        self.context = context
+        _date = State(initialValue: context.flatMap { FlightCalendar.hongKongDate(for: $0.day) } ?? FlightCalendar.lastHongKongHistoricalDate)
+        _arrival = State(initialValue: context?.isArrival ?? false)
+    }
+
     var body: some View {
         List {
+            if let context { PublishedFlightFacts(context: context, library: library) }
             Section {
-                DatePicker("香港当地日期", selection: $date, in: ...lastHistoricalDate, displayedComponents: .date)
-                    .environment(\.timeZone, FlightCalendar.hongKongZone)
-                Picker("方向", selection: $arrival) {
-                    Text("客运离港").tag(false)
-                    Text("客运抵港").tag(true)
+                if let context {
+                    LabeledContent("香港当地日期", value: context.day)
+                } else {
+                    DatePicker("香港当地日期", selection: $date, in: ...FlightCalendar.lastHongKongHistoricalDate, displayedComponents: .date)
+                        .environment(\.timeZone, FlightCalendar.hongKongZone)
+                    Picker("方向", selection: $arrival) {
+                        Text("客运离港").tag(false)
+                        Text("客运抵港").tag(true)
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
             } footer: {
-                Text("香港机场管理局开放数据，每日更新至上一自然日。此处展示历史航班，计划机型请查看航线页。")
+                Text("香港机场管理局开放数据，每日更新至上一自然日。历史记录未提供机型。")
             }
             Section {
                 if loading {
@@ -666,12 +716,14 @@ private struct HongKongFlightHistory: View {
                 } else if failed {
                     Button("重新查询", systemImage: "arrow.clockwise") { revision += 1 }
                 } else if movements.isEmpty {
-                    Text("当天没有返回记录").foregroundStyle(.secondary)
+                    Text("当天没有返回匹配的航班记录").foregroundStyle(.secondary)
                 }
                 ForEach(Array(movements.enumerated()), id: \.offset) { _, movement in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(movement.flight?.first?.no ?? "航班").font(AtlasTypography.font(.headline).monospacedDigit())
+                            let numbers = movement.flight ?? []
+                            let number = context.flatMap { selected in numbers.first { $0.no.uppercased().filter { !$0.isWhitespace } == selected.flightNumber.uppercased().filter { !$0.isWhitespace } } } ?? numbers.first
+                            Text(number?.no ?? "航班").font(AtlasTypography.font(.headline).monospacedDigit())
                             let codes = (arrival ? movement.origin : movement.destination) ?? []
                             Text(codes.map { code in
                                 library.airport(code).map { "\($0.displayName) \(code)" } ?? code
@@ -680,7 +732,10 @@ private struct HongKongFlightHistory: View {
                             Spacer()
                             Text(movement.time ?? "—").monospacedDigit()
                         }
+                        let airlines = Set((movement.flight ?? []).compactMap(\.airline)).sorted()
+                        if !airlines.isEmpty { Text("航司代码 \(airlines.joined(separator: "、"))").font(AtlasTypography.font(.caption)).foregroundStyle(.secondary) }
                         if let status = movement.status, !status.isEmpty { Text(status).font(AtlasTypography.font(.caption)).foregroundStyle(.secondary) }
+                        if let terminal = movement.terminal, !terminal.isEmpty { Text("航站楼 \(terminal)").font(AtlasTypography.font(.caption)).foregroundStyle(.secondary) }
                     }
                     .padding(.vertical, 3)
                 }
@@ -689,18 +744,16 @@ private struct HongKongFlightHistory: View {
                 Link("香港机场管理局 · 航班资料开放数据", destination: URL(string: "https://data.gov.hk/sc-data/dataset/aahk-team1-flight-info")!)
             }
         }
-        .navigationTitle("香港机场历史航班")
+        .accessibilityIdentifier("flight-details-board")
+        .navigationTitle(context?.flightNumber ?? "香港机场历史航班")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         .task(id: "\(FlightCalendar.isoDate(date))-\(arrival)-\(revision)") { await load() }
     }
 
-    private var lastHistoricalDate: Date {
-        FlightCalendar.calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
-    }
-
     private func load() async {
-        let requestedDay = FlightCalendar.isoDate(date)
+        guard DistributionPolicy.liveFlightsAvailable else { return }
+        let requestedDay = context?.day ?? FlightCalendar.isoDate(date)
         var url = URLComponents()
         url.scheme = "https"
         url.host = "www.hongkongairport.com"
@@ -720,7 +773,12 @@ private struct HongKongFlightHistory: View {
             }
             let batches = try JSONDecoder().decode([Batch].self, from: data)
             guard !Task.isCancelled else { return }
-            movements = batches.filter { $0.date == requestedDay }.flatMap { $0.list ?? [] }
+            let records = batches.filter { $0.date == requestedDay }.flatMap { $0.list ?? [] }
+            movements = records.filter { record in
+                guard let context else { return true }
+                let codes = (arrival ? record.origin : record.destination) ?? []
+                return (record.flight ?? []).contains { flight in codes.contains { context.matches(number: flight.no, airport: $0) } }
+            }
             loading = false
         } catch {
             guard !Task.isCancelled else { return }

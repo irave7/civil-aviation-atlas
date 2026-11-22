@@ -13,9 +13,13 @@ xcuserdata/
 
 /Build/*
 !/Build/App.xcconfig
+!/Build/MainlandReview.xcconfig
+!/Build/prepare-mainland-catalog.py
+!/Build/update-airport-scheduled-service.py
 !/Build/UITests.xcconfig
 !/Build/UITests/
 !/Build/build.sh
 !/Build/check-data.py
 !/Build/render-icon.swift
 !/Build/verify-device-product.sh
+!/Build/ReleaseIdentity.plist

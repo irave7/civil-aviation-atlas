@@ -7,9 +7,10 @@ import FoundationXML
 struct AvinorAirportBoard: View {
     let airport: Airport
     let library: AtlasLibrary
+    let context: FlightBoardContext?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var direction = AvinorFlight.Direction.departure
+    @State private var direction: AvinorFlight.Direction
     @State private var snapshot: AvinorFeed.Snapshot?
     @State private var isLoading = true
     @State private var requestInProgress = false
@@ -28,20 +29,37 @@ struct AvinorAirportBoard: View {
         airport.countryCode == "NO" && supportedCodes.contains(airport.iata.uppercased())
     }
 
+    init(airport: Airport, library: AtlasLibrary, context: FlightBoardContext? = nil) {
+        self.airport = airport
+        self.library = library
+        self.context = context
+        _direction = State(initialValue: context?.isArrival == true ? .arrival : .departure)
+    }
+
     private var displayedFlights: [AvinorFlight] {
-        snapshot?.flights.filter { $0.direction == direction } ?? []
+        snapshot?.flights.filter { flight in
+            guard flight.direction == direction else { return false }
+            guard let context else { return true }
+            return context.matches(number: flight.number, airport: flight.airportCode)
+                && context.matches(dayForTimestamp: flight.scheduledAt, in: AvinorFeed.norwayZone)
+        } ?? []
     }
 
     var body: some View {
         NavigationStack {
             List {
+                if let context { PublishedFlightFacts(context: context, library: library) }
                 Section {
-                    Picker("航班方向", selection: $direction) {
-                        Text("出发").tag(AvinorFlight.Direction.departure)
-                        Text("到达").tag(AvinorFlight.Direction.arrival)
+                    if let context {
+                        LabeledContent("机场当地日期", value: context.day)
+                    } else {
+                        Picker("航班方向", selection: $direction) {
+                            Text("出发").tag(AvinorFlight.Direction.departure)
+                            Text("到达").tag(AvinorFlight.Direction.arrival)
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("avinor-board-direction")
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("avinor-board-direction")
                 } footer: {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("时间为挪威当地时间。查看约过去 1 小时至未来 6 小时的航班。此数据源未提供执飞机型。")
@@ -56,7 +74,7 @@ struct AvinorAirportBoard: View {
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("avinor-board-error")
                     } else if displayedFlights.isEmpty {
-                        ContentUnavailableView("此方向暂无航班", systemImage: "airplane")
+                        ContentUnavailableView("暂无匹配航班", systemImage: "airplane")
                     } else {
                         ForEach(displayedFlights) { flight in
                             flightRow(flight)
@@ -67,8 +85,8 @@ struct AvinorAirportBoard: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .accessibilityIdentifier("avinor-board")
-            .navigationTitle("机场航班动态")
+            .accessibilityIdentifier("flight-details-board")
+            .navigationTitle(context?.flightNumber ?? "机场航班动态")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 Link("Flight data from Avinor", destination: AvinorFeed.attribution)
@@ -158,7 +176,7 @@ struct AvinorAirportBoard: View {
         } catch {
             guard !Task.isCancelled else { return }
             snapshot = nil
-            failure = (error as? AvinorFeed.FeedError)?.message ?? "暂时无法连接机场航班服务。可到 Avinor 查看。"
+            failure = (error as? AvinorFeed.FeedError)?.message ?? "暂时无法连接机场航班服务。可稍后刷新。"
         }
     }
 }
@@ -232,7 +250,7 @@ private actor AvinorBoardCache {
 
 private enum AvinorFeed {
     static let attribution = URL(string: "https://www.avinor.no")!
-    private static let norwayZone = TimeZone(identifier: "Europe/Oslo") ?? .gmt
+    static let norwayZone = TimeZone(identifier: "Europe/Oslo") ?? .gmt
 
     struct Snapshot: Sendable {
         let flights: [AvinorFlight]
@@ -245,9 +263,9 @@ private enum AvinorFeed {
 
         var message: String {
             switch self {
-            case .unavailable: "机场航班服务暂时无法读取。可到 Avinor 查看。"
+            case .unavailable: "机场航班服务暂时无法读取。"
             case .unrecognized: "机场返回了无法识别的航班资料。"
-            case .expired: "机场返回的时刻超出当前查询范围。可到 Avinor 查看最新资料。"
+            case .expired: "机场返回的时刻超出当前查询范围。"
             }
         }
     }
@@ -261,6 +279,7 @@ private enum AvinorFeed {
     }
 
     static func download(airport: String) async throws -> Snapshot {
+        guard DistributionPolicy.liveFlightsAvailable else { throw FeedError.unavailable }
         var endpoint = URLComponents(string: "https://asrv.avinor.no/XmlFeed/v1.0")!
         endpoint.queryItems = [
             URLQueryItem(name: "airport", value: airport),

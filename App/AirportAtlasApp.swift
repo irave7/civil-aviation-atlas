@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct AirportAtlasApp: App {
@@ -15,13 +16,15 @@ struct AirportAtlasApp: App {
     }
 }
 
-private enum AtlasDestination: Equatable {
+private enum AtlasDestination: Hashable {
     case favorites
     case globe
     case airports
     case airport(String)
     case fleet
+    case explore
     case aircraft(String)
+    case privacy
     case sources
 }
 
@@ -29,14 +32,75 @@ private enum AtlasDestination: Equatable {
 struct AtlasHome: View {
     let library: AtlasLibrary
     @State private var favorites = AtlasFavorites()
-    @State private var destination: AtlasDestination = .globe
+    @State private var tabletDestination: AtlasDestination = .globe
+    @State private var phonePath: [AtlasDestination] = []
+    @State private var showsPhoneDirectory = false
     @State private var query = ""
     @State private var visibility: NavigationSplitViewVisibility = .detailOnly
     @State private var compactColumn: NavigationSplitViewColumn = .detail
     @Environment(\.horizontalSizeClass) private var horizontal
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    private var destination: AtlasDestination {
+        isPhone ? phonePath.last ?? .globe : tabletDestination
+    }
+
     var body: some View {
+        Group {
+            if isPhone {
+                phoneApp
+            } else {
+                tabletApp
+            }
+        }
+        .task(priority: .utility) { await library.prepareObservedRoutes() }
+        .task(priority: .utility) {
+            guard DistributionPolicy.airportSiteModelsAvailable, let sample = library.airport("FOC") else { return }
+            await Task.detached(priority: .utility) { AirportSiteCatalog.preload(for: sample) }.value
+        }
+    }
+
+    private var phoneApp: some View {
+        NavigationStack(path: $phonePath) {
+            GlobeView(library: library, open: { navigate(.airport($0.id)) })
+                .navigationTitle(title(for: .globe))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { sidebarButton }
+                    ToolbarItem(placement: .principal) {
+                        Text(title(for: .globe))
+                            .font(AtlasTypography.font(.headline))
+                            .foregroundStyle(DistributionPolicy.mapsAvailable ? Color.white : Color.primary)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) { airportDirectoryButton }
+                }
+                .navigationDestination(for: AtlasDestination.self) { page in
+                    detail(page)
+                        .navigationTitle(title(for: page))
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) { sidebarButton }
+                        }
+                }
+        }
+        .sheet(isPresented: $showsPhoneDirectory, onDismiss: { query = "" }) {
+            NavigationStack {
+                sidebar
+                    .navigationTitle("民航图鉴")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { showsPhoneDirectory = false }
+                                .accessibilityIdentifier("atlas-directory-done")
+                        }
+                    }
+            }
+        }
+    }
+
+    private var tabletApp: some View {
         NavigationSplitView(columnVisibility: $visibility, preferredCompactColumn: $compactColumn) {
             sidebar
                 .navigationTitle("民航图鉴")
@@ -50,47 +114,43 @@ struct AtlasHome: View {
                     .accessibilityHidden(destination != .globe)
                     .zIndex(0)
                 if destination != .globe {
-                    detail
+                    detail(destination)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(.background)
                         .transition(.opacity)
                         .zIndex(1)
                 }
             }
-            .navigationTitle(detailTitle)
+            .navigationTitle(title(for: destination))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(removing: .sidebarToggle)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { sidebarButton }
                 ToolbarItem(placement: .principal) {
-                    Text(detailTitle)
+                    Text(title(for: destination))
                         .font(AtlasTypography.font(.headline))
-                        .foregroundStyle(destination == .globe ? Color.white : Color.primary)
+                        .foregroundStyle(destination == .globe && DistributionPolicy.mapsAvailable ? Color.white : Color.primary)
                         .accessibilityAddTraits(.isHeader)
                 }
                 if destination == .globe {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("机场目录", systemImage: "magnifyingglass") { navigate(.airports) }
-                            .accessibilityIdentifier("globe-airports")
+                        airportDirectoryButton
                     }
                 }
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .task(priority: .utility) { await library.prepareObservedRoutes() }
-        .task(priority: .utility) {
-            guard let sample = library.airport("FOC") else { return }
-            await Task.detached(priority: .utility) { AirportSiteCatalog.preload(for: sample) }.value
-        }
     }
 
     private var sidebar: some View {
         List {
             Section {
                 entry("收藏", symbol: "star", target: .favorites, id: "entry-favorites")
-                entry("地球", symbol: "globe.asia.australia.fill", target: .globe, id: "entry-globe")
+                entry(title(for: .globe), symbol: "globe.asia.australia.fill", target: .globe, id: "entry-globe")
                 entry("机场图鉴", symbol: "airplane.arrival", target: .airports, id: "entry-airports")
                 entry("客机图鉴", symbol: "airplane", target: .fleet, id: "entry-aircraft")
+                entry("航线探索", symbol: "point.topleft.down.to.point.bottomright.curvepath", target: .explore, id: "entry-exploration")
+                entry("隐私与数据", symbol: "hand.raised", target: .privacy, id: "entry-privacy")
             } header: {
                 Text("浏览")
             }
@@ -126,8 +186,7 @@ struct AtlasHome: View {
                 }
             }
         }
-        .listStyle(.sidebar)
-        .searchable(text: $query, placement: .sidebar, prompt: "机场名称或代码")
+        .modifier(DirectorySearch(query: $query, isPhone: isPhone))
     }
 
     private var aircraftShortcuts: [AircraftProfile] {
@@ -139,8 +198,8 @@ struct AtlasHome: View {
     }
 
     @ViewBuilder
-    private var detail: some View {
-        switch destination {
+    private func detail(_ page: AtlasDestination) -> some View {
+        switch page {
         case .favorites:
             FavoritesHome(
                 airports: favorites.airportIDs.compactMap(library.airport).sorted { $0.displayCode < $1.displayCode },
@@ -163,8 +222,8 @@ struct AtlasHome: View {
                 )
                 .id(id)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        globeButton
+                    if !isPhone {
+                        ToolbarItem(placement: .topBarLeading) { globeButton }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         AtlasFavoriteButton(favorites: favorites, id: airport.id, kind: .airport)
@@ -173,6 +232,8 @@ struct AtlasHome: View {
             } else {
                 ContentUnavailableView("机场资料暂不可用", systemImage: "airplane.arrival")
             }
+        case .explore:
+            FlightExploration(library: library) { navigate(.airport($0.id)) }
         case .fleet:
             FleetDirectory(aircraft: library.aircraft) { navigate(.aircraft($0.id)) }
         case .aircraft(let id):
@@ -180,8 +241,8 @@ struct AtlasHome: View {
                 AircraftDetail(profile: profile, library: library, onAirport: { navigate(.airport($0.id)) }, setImmersive: setImmersive)
                     .id(id)
                     .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            globeButton
+                        if !isPhone {
+                            ToolbarItem(placement: .topBarLeading) { globeButton }
                         }
                         ToolbarItem(placement: .topBarTrailing) {
                             AtlasFavoriteButton(favorites: favorites, id: profile.id, kind: .aircraft)
@@ -190,6 +251,8 @@ struct AtlasHome: View {
             } else {
                 ContentUnavailableView("客机资料暂不可用", systemImage: "airplane")
             }
+        case .privacy:
+            AtlasPrivacyPane(favorites: favorites)
         case .sources:
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -205,38 +268,8 @@ struct AtlasHome: View {
                         Text(coverage)
                         SourceLinks(sources: library.observedRouteSources)
                     }
-                    let siteData = AirportSiteCatalog.resourceURL
-                    let runwayData = AirportSiteCatalog.runwaySupplementURL
-                    if siteData != nil || runwayData != nil {
-                        Divider()
-                        Text("机场场区地图数据").font(AtlasTypography.font(.title2).bold())
-                        SourceLinks(sources: [AirportSiteCatalog.source])
-                        if let siteData {
-                            ShareLink(item: siteData) {
-                                Label("导出场区地图数据", systemImage: "square.and.arrow.up")
-                            }
-                            .accessibilityIdentifier("export-site-data")
-                        }
-                        if let runwayData {
-                            ShareLink(item: runwayData) {
-                                Label("导出补充跑道数据", systemImage: "square.and.arrow.up")
-                            }
-                            .accessibilityIdentifier("export-airport-runway-data")
-                        }
-                    }
-                    if let buildings = AirportSiteCatalog.buildingResourceURL {
-                        Divider()
-                        Text("机场建筑轮廓").font(AtlasTypography.font(.title2).bold())
-                        SourceLinks(sources: AirportSiteCatalog.buildingDataSources)
-                        ShareLink(item: buildings) {
-                            Label("导出建筑轮廓数据", systemImage: "square.and.arrow.up")
-                        }
-                        .accessibilityIdentifier("export-airport-buildings")
-                    }
-                    if !AirportSiteCatalog.terrainSources.isEmpty {
-                        Divider()
-                        Text("机场场址高程").font(AtlasTypography.font(.title2).bold())
-                        SourceLinks(sources: AirportSiteCatalog.terrainSources)
+                    if DistributionPolicy.airportSiteModelsAvailable {
+                        mapDataResources
                     }
                 }
                 .atlasReadingWidth()
@@ -244,43 +277,100 @@ struct AtlasHome: View {
         }
     }
 
-    private var detailTitle: String {
-        switch destination {
+    @ViewBuilder
+    private var mapDataResources: some View {
+        let siteData = AirportSiteCatalog.resourceURL
+        let runwayData = AirportSiteCatalog.runwaySupplementURL
+        if siteData != nil || runwayData != nil {
+            Divider()
+            Text("机场场区地图数据").font(AtlasTypography.font(.title2).bold())
+            SourceLinks(sources: [AirportSiteCatalog.source])
+            if let siteData {
+                ShareLink(item: siteData) {
+                    Label("导出场区地图数据", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("export-site-data")
+            }
+            if let runwayData {
+                ShareLink(item: runwayData) {
+                    Label("导出补充跑道数据", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("export-airport-runway-data")
+            }
+        }
+        if let buildings = AirportSiteCatalog.buildingResourceURL {
+            Divider()
+            Text("机场建筑轮廓").font(AtlasTypography.font(.title2).bold())
+            SourceLinks(sources: AirportSiteCatalog.buildingDataSources)
+            ShareLink(item: buildings) {
+                Label("导出建筑轮廓数据", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("export-airport-buildings")
+        }
+        if !AirportSiteCatalog.terrainSources.isEmpty {
+            Divider()
+            Text("机场场址高程").font(AtlasTypography.font(.title2).bold())
+            SourceLinks(sources: AirportSiteCatalog.terrainSources)
+        }
+    }
+
+    private func title(for page: AtlasDestination) -> String {
+        switch page {
         case .favorites: "收藏"
-        case .globe: "地球"
+        case .globe: DistributionPolicy.mapsAvailable ? "地球" : "机场浏览"
         case .airports: "机场图鉴"
         case .airport(let id): library.airport(id)?.displayName ?? "机场"
+        case .explore: "航线探索"
         case .fleet: "客机图鉴"
         case .aircraft(let id): library.aircraft(id)?.displayName ?? "客机"
+        case .privacy: "隐私与数据"
         case .sources: "资料来源"
         }
     }
 
     private func navigate(_ next: AtlasDestination) {
+        if isPhone {
+            if next == .globe {
+                phonePath.removeAll()
+            } else if showsPhoneDirectory {
+                phonePath = [next]
+            } else if next != phonePath.last {
+                phonePath.append(next)
+            }
+            showsPhoneDirectory = false
+            return
+        }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-            destination = next
+            tabletDestination = next
             if horizontal == .compact { compactColumn = .detail }
             switch next {
             case .globe, .airport, .aircraft: setImmersive(true)
-            case .favorites, .airports, .fleet, .sources: setImmersive(false)
+            case .favorites, .airports, .fleet, .explore, .privacy, .sources: setImmersive(false)
             }
         }
     }
 
     private func setImmersive(_ immersive: Bool) {
-        guard horizontal != .compact else { return }
+        guard !isPhone, horizontal != .compact else { return }
         visibility = immersive ? .detailOnly : .all
     }
 
     private var globeButton: some View {
-        Button("返回地球", systemImage: "globe.asia.australia") { navigate(.globe) }
+        Button(DistributionPolicy.mapsAvailable ? "返回地球" : "返回机场浏览", systemImage: "globe.asia.australia") { navigate(.globe) }
             .accessibilityIdentifier("return-to-globe")
     }
 
+    private var airportDirectoryButton: some View {
+        Button("机场目录", systemImage: "magnifyingglass") { navigate(.airports) }
+            .accessibilityIdentifier("globe-airports")
+    }
+
     private var sidebarButton: some View {
-        let closed = horizontal == .compact || visibility == .detailOnly
-        return Button(closed ? "显示目录" : "收起目录", systemImage: "sidebar.left") {
-            if horizontal == .compact {
+        let closed = isPhone || horizontal == .compact || visibility == .detailOnly
+        return Button(closed ? "显示目录" : "收起目录", systemImage: isPhone ? "list.bullet" : "sidebar.left") {
+            if isPhone {
+                showsPhoneDirectory = true
+            } else if horizontal == .compact {
                 compactColumn = .sidebar
             } else {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
@@ -309,6 +399,23 @@ struct AtlasHome: View {
         switch (target, destination) {
         case (.airports, .airport), (.fleet, .aircraft): true
         default: target == destination
+        }
+    }
+}
+
+private struct DirectorySearch: ViewModifier {
+    @Binding var query: String
+    let isPhone: Bool
+
+    func body(content: Content) -> some View {
+        if isPhone {
+            content
+                .listStyle(.insetGrouped)
+                .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "机场名称或代码")
+        } else {
+            content
+                .listStyle(.sidebar)
+                .searchable(text: $query, placement: .sidebar, prompt: "机场名称或代码")
         }
     }
 }
@@ -436,8 +543,10 @@ private struct AirportDirectory: View {
                 }
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("airport-directory-scope")
-                Toggle("有建筑模型", isOn: $buildingsOnly)
-                    .accessibilityIdentifier("airport-building-filter")
+                if DistributionPolicy.airportSiteModelsAvailable {
+                    Toggle("有建筑模型", isOn: $buildingsOnly)
+                        .accessibilityIdentifier("airport-building-filter")
+                }
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("机场索引收录 \(library.airports.count.formatted()) 座机场。支持 IATA、ICAO 代码和中英文关键词。")
@@ -469,9 +578,9 @@ private struct AirportDirectory: View {
 
 struct AirportRow: View {
     let airport: Airport
+    @Environment(\.horizontalSizeClass) private var horizontal
 
     var body: some View {
-        let coverage = airport.modelLabel
         HStack(spacing: 15) {
             Text(airport.displayCode)
                 .font(.system(.title3, design: .monospaced, weight: .semibold))
@@ -480,12 +589,14 @@ struct AirportRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(airport.displayName).font(AtlasTypography.font(.title3, weight: .semibold))
                 Text(airport.displayCity).font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                if DistributionPolicy.airportSiteModelsAvailable && horizontal == .compact {
+                    coverageBadge
+                }
             }
             Spacer(minLength: 2)
-            Text(coverage)
-                .font(AtlasTypography.font(.caption))
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("模型覆盖 · \(coverage)")
+            if DistributionPolicy.airportSiteModelsAvailable && horizontal != .compact {
+                coverageBadge
+            }
             Image(systemName: "chevron.right")
                 .font(AtlasTypography.font(.caption).weight(.semibold))
                 .foregroundStyle(.tertiary)
@@ -493,6 +604,14 @@ struct AirportRow: View {
         }
         .padding(.vertical, 8)
         .contentShape(.rect)
+    }
+
+    private var coverageBadge: some View {
+        let coverage = airport.modelLabel
+        return Text(coverage)
+            .font(AtlasTypography.font(.caption))
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("模型覆盖 · \(coverage)")
     }
 }
 

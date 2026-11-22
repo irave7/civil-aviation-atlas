@@ -1,7 +1,7 @@
 # 民航图鉴维护说明
 
 - 把此仓库作为应用的源码和版本记录。继续修改前检查 `git status`、`git log -5`、`Build/App.xcconfig` 与 README 的版本表。
-- App 源码和随包资源在 `App/`，构建及数据检查在 `Build/`。变更机场、跑道、航线索引时运行 `python3 Build/check-data.py`，界面变更在 iPad 模拟器上验证。
+- App 源码和随包资源在 `App/`，构建及数据检查在 `Build/`。变更机场、跑道、航线索引时运行 `python3 Build/check-data.py`，同时用 `python3 Build/prepare-mainland-catalog.py --check` 验证大陆审查目录。界面变更在 iPhone 和 iPad 模拟器上验证。
 - 机场场景、航线统计期、实时动态和涂装的精度与来源以应用内标注为准。扩充时保留原始标识、数据依据和第三方署名。
 - 可发布版本在 `main` 留下有说明的提交，并推送到用户的 GitHub 仓库。TestFlight 构建使用新的构建号，实际收到上传回执后再记录为已上传，核对测试组后再记录为已分发。
 - 保持构建产物、测试录像、签名资料、账号密钥和本地配置在公开仓库之外。

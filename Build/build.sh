@@ -23,7 +23,7 @@ case "${1:-}" in
             -derivedDataPath "$build_dir/device" CODE_SIGNING_ALLOWED=NO build
         ;;
     test)
-        simulator_id="${2:?Pass the UUID of an available iPad simulator as the second argument.}"
+        simulator_id="${2:?Pass the UUID of an available iPhone or iPad simulator as the second argument.}"
         test_result="$build_dir/airport-atlas-tests-$(date +%Y%m%d-%H%M%S).xcresult"
         xcodebuild "${xcode_args[@]}" -destination "platform=iOS Simulator,id=$simulator_id" \
             -derivedDataPath "$build_dir/simulator" -resultBundlePath "$test_result" \
@@ -39,6 +39,18 @@ case "${1:-}" in
         xcodebuild "${xcode_args[@]}" -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath "$build_dir/device" -archivePath "$signed_archive" \
             -allowProvisioningUpdates "DEVELOPMENT_TEAM=$developer_team" archive
+        ;;
+    mainland-device|mainland-archive-signed)
+        python3 "$project_root/Build/prepare-mainland-catalog.py" --check
+        mainland_args=(-project "$project_root/AirportAtlas.xcodeproj" -scheme AirportAtlasMainlandReview
+            -destination 'generic/platform=iOS' -derivedDataPath "$build_dir/mainland-device")
+        if [[ "$1" == mainland-device ]]; then
+            xcodebuild "${mainland_args[@]}" CODE_SIGNING_ALLOWED=NO build
+        else
+            developer_team="${ATLAS_DEVELOPMENT_TEAM:?Set ATLAS_DEVELOPMENT_TEAM to the authorized Apple Developer team ID.}"
+            xcodebuild "${mainland_args[@]}" -archivePath "$build_dir/AirportAtlas-MainlandReview.xcarchive" \
+                -allowProvisioningUpdates "DEVELOPMENT_TEAM=$developer_team" archive
+        fi
         ;;
     export-testflight|upload-testflight|upload-testflight-internal)
         developer_team="${ATLAS_DEVELOPMENT_TEAM:?Set ATLAS_DEVELOPMENT_TEAM to the authorized Apple Developer team ID.}"
@@ -69,7 +81,7 @@ case "${1:-}" in
             -exportOptionsPlist "$options" -allowProvisioningUpdates
         ;;
     *)
-        printf 'Usage: %s {simulator|device|test SIMULATOR_UUID|archive|archive-signed|export-testflight|upload-testflight|upload-testflight-internal}\n' "$0" >&2
+        printf 'Usage: %s {simulator|device|test SIMULATOR_UUID|archive|archive-signed|mainland-device|mainland-archive-signed|export-testflight|upload-testflight|upload-testflight-internal}\n' "$0" >&2
         exit 2
         ;;
 esac

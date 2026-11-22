@@ -10,6 +10,8 @@ struct AtlasModel {
     let metersPerUnit: Float
     let sourceNote: String
     var context: Entity? = nil
+    var stageSurface: AtlasStageSurface = .studio
+    var stageGroundY: Float? = nil
 }
 
 struct AtlasPart: Identifiable {

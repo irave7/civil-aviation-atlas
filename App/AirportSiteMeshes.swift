@@ -28,15 +28,8 @@ enum AirportSiteMeshes {
     ]
 
     static func addGround(on context: Entity, plan: AirportSitePlan) {
-        let bounds = plan.bounds
-        let center = bounds.center
-        let span = max(8, bounds.span)
         let batch = Batch()
-        batch.box([span * 2.3, 0.065, span * 2.3], [center.x, -0.11, center.y], .deepWater)
         let boundaries = plan.features.filter { $0.source.kind == .boundary && $0.source.area }
-        if boundaries.isEmpty {
-            batch.box([max(6, bounds.size.x) + 4, 0.04, max(6, bounds.size.y) + 4], [center.x, -0.021, center.y], .islandGrass)
-        }
         for boundary in boundaries {
             batch.flatPolygon(boundary.points, y: -0.001, paint: .islandGrass)
             for (index, start) in boundary.points.enumerated() {
@@ -78,11 +71,15 @@ enum AirportSiteMeshes {
                 let local = feature.points.map { $0 - center }
                 let base: Float = 0.015
                 let ridge = base + height
-                for (pointIndex, point) in local.enumerated() {
-                    let next = local[(pointIndex + 1) % local.count]
+                let edges = Array(zip(local, Array(local.dropFirst()) + [local[0]]))
+                let isCounterclockwise = edges.reduce(Float.zero) { area, edge in
+                    area + edge.0.x * edge.1.y - edge.1.x * edge.0.y
+                } > 0
+                for (point, next) in edges {
                     batch.quad([point.x, base, point.y], [next.x, base, next.y], [next.x, ridge, next.y], [point.x, ridge, point.y], .buildingWall, twoSided: true)
                     if layer.kind == .terminal || layer.kind == .tower {
                         batch.line([point.x, ridge, point.y], [next.x, ridge, next.y], width: 0.008, height: 0.007, .roofSeam)
+                        addGlazing(from: point, to: next, base: base, height: height, outward: isCounterclockwise ? 1 : -1, to: batch)
                     }
                 }
                 batch.flatPolygon(local, y: ridge, paint: layer.roof)
@@ -96,7 +93,7 @@ enum AirportSiteMeshes {
             AtlasGeometry.partCollider(child, size: [max(0.14, size.x), height, max(0.14, size.y)], center: [0, height / 2, 0])
             let radial = center - bounds.center
             let separation = max(0.38, min(1.3, feature.bounds.span * 0.28))
-            let detail = feature.source.area ? "建筑体量依据公开轮廓重建。" : "根据公开地图标注的位置绘制塔台体量示意。"
+            let detail = feature.source.area ? "建筑体量依据公开轮廓重建，立面材质为示意。" : "根据公开地图标注的位置绘制塔台体量示意。"
             let heightNote = sourceHeight == nil ? "高度按同类建筑体量估算。" : "高度取自公开地图记录。"
             return AtlasPart(
                 id: child.name, label: feature.source.name ?? "\(layer.label) \(index + 1)", symbol: layer.symbol,
@@ -112,6 +109,24 @@ enum AirportSiteMeshes {
             focusDistance: max(1.6, bounds.span * 2.1, tallest * 4.65),
             explodeOffset: layer.spread * lift, children: structures
         )
+    }
+
+    private static func addGlazing(
+        from start: SIMD2<Float>, to end: SIMD2<Float>, base: Float, height: Float, outward: Float, to batch: Batch
+    ) {
+        let direction = end - start
+        let length = simd_length(direction)
+        guard length >= 0.14, height >= 0.045 else { return }
+        let normal = SIMD2<Float>(direction.y, -direction.x) * (outward * 0.0018 / length)
+        let low = base + height * 0.37
+        let high = base + height * 0.74
+        let panels = max(1, min(24, Int(length / 0.085)))
+        for panel in 0..<panels {
+            let left = start + direction * ((Float(panel) + 0.08) / Float(panels)) + normal
+            let right = start + direction * ((Float(panel) + 0.89) / Float(panels)) + normal
+            batch.quad([left.x, low, left.y], [right.x, low, right.y],
+                       [right.x, high, right.y], [left.x, high, left.y], .terminalGlass, twoSided: true)
+        }
     }
 
     private static func pavementGroup(

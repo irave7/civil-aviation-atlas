@@ -48,6 +48,7 @@ struct ModelWorkspace: View {
     @State private var distance: Float
     @State private var azimuth: Float = -0.53
     @State private var elevation: Float = 0.56
+    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
 
     init(
         model: AtlasModel,
@@ -70,6 +71,7 @@ struct ModelWorkspace: View {
     private var hasSplitZoom: Bool { expandsSplitZoom && mode == .exploded }
     private var pinchMovesParts: Bool { mode == .exploded && !(hasSplitZoom && pinchZoomsInSplit) }
     private var zoomPercent: Int { Int(((part?.focusDistance ?? model.overviewDistance) * 100 / distance).rounded()) }
+    private var canDirectlySplit: Bool { !measuring && mode != .exploded && availableModes.contains(.exploded) }
 
     private var availableModes: [ModelMode] {
         let scope = part?.hierarchy ?? scene.orderedParts
@@ -86,7 +88,7 @@ struct ModelWorkspace: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 760
+            let wide = !isPhone && geometry.size.width >= 760
             HStack(spacing: 0) {
                 stage(isWide: wide)
                 if showParts && wide {
@@ -117,30 +119,35 @@ struct ModelWorkspace: View {
         GeometryReader { viewport in
             let aspect = Float(viewport.size.width / max(1, viewport.size.height))
             let distanceFit = min(2.6, max(1, 1.16 / max(0.1, aspect)))
+            let shortStage = isPhone && viewport.size.height < 320 && viewport.size.width >= 480
+            let padding = shortStage ? 8.0 : Self.stageControlPadding
+            let visibleLift = shortStage ? max(0, (bottomControlsHeight - 42) / 2) : 0
+            let centerLift = Float(min(0.16, visibleLift / max(1, viewport.size.height)))
             ZStack {
-                Rectangle().fill(Color(red: 0.055, green: 0.085, blue: 0.132).gradient)
-                renderSurface(distanceFit: distanceFit)
+                Rectangle().fill(AtlasModelStage.backdrop)
+                renderSurface(distanceFit: distanceFit, controlPadding: padding, centerLift: centerLift)
                 VStack(spacing: 0) {
-                    header(isWide: isWide)
+                    header(isWide: isWide, shortStage: shortStage)
                     Spacer(minLength: 12)
-                    tools(viewportHeight: viewport.size.height, distanceFit: distanceFit)
+                    tools(viewportHeight: viewport.size.height, distanceFit: distanceFit, shortStage: shortStage)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
                 }
                 .padding(.horizontal, isWide ? 22 : 14)
-                .padding(.vertical, Self.stageControlPadding)
+                .padding(.vertical, padding)
             }
             .clipped()
             .colorScheme(.dark)
         }
     }
 
-    private func renderSurface(distanceFit: Float) -> some View {
+    private func renderSurface(distanceFit: Float, controlPadding: CGFloat, centerLift: Float) -> some View {
         let viewAzimuth = azimuth
         let viewElevation = elevation
         let viewDistance = distance * distanceFit
         let partID = activePart
         let currentMode = mode
         let isolated = isolateSelection
+        let backgroundDimmed = (isolated && partID != nil) || (model.stageSurface == .studio && currentMode != .exterior)
         let anchored = target
         let spread = Float(separation)
         let opacity = Float(transparency)
@@ -150,10 +157,12 @@ struct ModelWorkspace: View {
             content.camera = .virtual
             content.renderingEffects.motionBlur = .disabled
             content.add(scene.world)
-            scene.moveCamera(to: anchored, angle: viewAzimuth, height: viewElevation, distance: viewDistance)
+            scene.moveCamera(to: anchored, angle: viewAzimuth, height: viewElevation, distance: viewDistance,
+                             centerLift: centerLift, dimGround: backgroundDimmed)
             scene.update(partID: partID, mode: currentMode, isolated: isolated, spread: spread, opacity: opacity, points: points)
         } update: { _ in
-            scene.moveCamera(to: anchored, angle: viewAzimuth, height: viewElevation, distance: viewDistance)
+            scene.moveCamera(to: anchored, angle: viewAzimuth, height: viewElevation, distance: viewDistance,
+                             centerLift: centerLift, dimGround: backgroundDimmed)
             scene.update(partID: partID, mode: currentMode, isolated: isolated, spread: spread, opacity: opacity, points: points)
         } placeholder: {
             ProgressView("载入三维模型")
@@ -164,7 +173,11 @@ struct ModelWorkspace: View {
             ModelTouchSurface(
                 zoomLabel: "\(zoomPercent)%",
                 gestureHint: pinchMovesParts ? "单指旋转，双指平移，捏合调整部件间距" : "单指旋转，双指平移或捏合缩放",
-                bottomHUDClearance: bottomControlsHeight + Self.stageControlPadding + 12
+                bottomHUDClearance: bottomControlsHeight + controlPadding + 12,
+                upperControls: CGSize(width: isPhone ? 120 : 172, height: controlPadding + 50),
+                canToggleTransparency: !measuring && availableModes.contains(.xray),
+                canToggleSection: !measuring && availableModes.contains(.section),
+                canDirectlySplit: canDirectlySplit
             ) { point, size in
                 tapModel(at: point, in: size)
             } orbit: { delta in
@@ -174,6 +187,13 @@ struct ModelWorkspace: View {
                 transformModel(translation: translation, scale: scale, size: size, distanceFit: distanceFit)
             } adjustZoom: { scale in
                 distance = clampedDistance(distance / scale)
+            } toggleTransparency: {
+                toggleMode(.xray)
+            } toggleSection: {
+                toggleMode(.section)
+            } openSplit: { scale in
+                if canDirectlySplit { changeMode(.exploded) }
+                adjustSeparation(by: scale)
             }
         }
     }
@@ -192,7 +212,7 @@ struct ModelWorkspace: View {
         if scale != 1 {
             if pinchMovesParts {
                 // Logarithmic increments make opening and closing equally responsive at any finger span.
-                separation = min(1, max(0, separation + log(Double(scale))))
+                adjustSeparation(by: scale)
             } else {
                 distance = clampedDistance(distance / Float(scale))
             }
@@ -204,23 +224,29 @@ struct ModelWorkspace: View {
         target += (up * Float(translation.dy) - right * Float(translation.dx)) * unitsPerPoint
     }
 
-    private func header(isWide: Bool) -> some View {
+    private func adjustSeparation(by scale: CGFloat) {
+        separation = min(1, max(0, separation + log(Double(scale))))
+    }
+
+    private func header(isWide: Bool, shortStage: Bool) -> some View {
         HStack(alignment: .top, spacing: 9) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(AtlasTypography.font(isWide ? .title : .title2, weight: .bold))
+                    .font(AtlasTypography.font(shortStage ? .headline : isWide ? .title : .title2, weight: .bold))
                     .foregroundStyle(.white)
-                    .lineLimit(2)
+                    .lineLimit(shortStage ? 1 : 2)
                     .accessibilityAddTraits(.isHeader)
-                Text(subtitle)
-                    .font(AtlasTypography.font(isWide ? .subheadline : .footnote, weight: .semibold))
-                    .foregroundStyle(.mint)
-                    .lineLimit(2)
+                if !shortStage {
+                    Text(subtitle)
+                        .font(AtlasTypography.font(isWide ? .subheadline : .footnote, weight: .semibold))
+                        .foregroundStyle(.mint)
+                        .lineLimit(2)
+                }
                 if let part {
                     Label(part.label, systemImage: part.symbol)
                         .font(AtlasTypography.font(.callout, weight: .medium))
                         .foregroundStyle(.white.opacity(0.90))
-                        .lineLimit(2)
+                        .lineLimit(shortStage ? 1 : 2)
                 }
             }
             .allowsHitTesting(false)
@@ -229,16 +255,23 @@ struct ModelWorkspace: View {
             Button {
                 showGestures.toggle()
             } label: {
-                Label("触控操作", systemImage: "hand.draw").labelStyle(.iconOnly)
+                Image(systemName: "hand.draw")
+                    .frame(minWidth: 34, minHeight: 34)
+                    .contentShape(.rect)
             }
             .buttonStyle(.glass)
+            .foregroundStyle(.white)
+            .accessibilityLabel("触控操作")
             .accessibilityIdentifier("model-gesture-help")
             .popover(isPresented: $showGestures, arrowEdge: .top) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("触控操作").font(AtlasTypography.font(.title3, weight: .semibold))
                     Text("单指拖动旋转｜双指拖动平移")
                     Text("双指张开或捏合缩放模型")
+                    if availableModes.contains(.xray) { Text("单指双击切换透视") }
+                    if availableModes.contains(.section) { Text("双指双击切换剖视") }
                     if availableModes.contains(.exploded) {
+                        Text("在画面上竖直张开双指，可直接进入拆分。")
                         if expandsSplitZoom {
                             Text("在「拆分」模式下，默认捏合调整部件间距。点「捏合」可切换手势，也可以直接拖动镜头缩放滑杆。")
                         } else {
@@ -254,84 +287,118 @@ struct ModelWorkspace: View {
             Button {
                 if isWide { showParts.toggle() } else { partsSheet.toggle() }
             } label: {
-                Label("部件", systemImage: "sidebar.trailing")
-                    .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                if isPhone {
+                    Image(systemName: "sidebar.trailing")
+                        .frame(minWidth: 34, minHeight: 34)
+                        .contentShape(.rect)
+                } else {
+                    Label("部件", systemImage: "sidebar.trailing")
+                        .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                }
             }
             .buttonStyle(.glass)
+            .foregroundStyle(.white)
             .accessibilityLabel(isWide && showParts ? "隐藏部件" : "显示部件")
             .accessibilityIdentifier("model-parts")
         }
     }
 
-    private func tools(viewportHeight: CGFloat, distanceFit: Float) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 6) {
-                if hasSplitZoom {
-                    splitPinchControl
-                } else if model.metersPerUnit > 0 && !measuring && mode != .exploded {
-                    ruler(viewportHeight: viewportHeight, distanceFit: distanceFit)
+    private func tools(viewportHeight: CGFloat, distanceFit: Float, shortStage: Bool) -> some View {
+        VStack(alignment: .leading, spacing: shortStage ? 5 : 9) {
+            if shortStage {
+                settings
+                HStack(spacing: 6) {
+                    modeButtons(labels: false)
+                    if hasSplitZoom { splitPinchControl }
+                    Spacer(minLength: 0)
+                    actions
                 }
-                Spacer()
-                if model.metersPerUnit > 0 {
-                    Button {
-                        if mode == .exploded { changeMode(.exterior) }
-                        measuring.toggle()
-                        measurePoints.removeAll()
-                    } label: {
-                        Label("测距", systemImage: measuring ? "ruler.fill" : "ruler")
-                            .labelStyle(.iconOnly)
+            } else {
+                HStack(spacing: 6) {
+                    if hasSplitZoom {
+                        splitPinchControl
+                    } else if model.metersPerUnit > 0 && !measuring && mode != .exploded {
+                        ruler(viewportHeight: viewportHeight, distanceFit: distanceFit)
                     }
-                    .buttonStyle(.glass)
-                    .tint(measuring ? .orange : nil)
-                    .accessibilityIdentifier("model-measure")
+                    Spacer(minLength: 2)
+                    actions
                 }
-                Button {
-                    elevation = elevation > 1.3 ? 0.56 : 1.45
-                } label: {
-                    Label("俯视", systemImage: "view.2d")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.glass)
-                Button {
-                    reset()
-                } label: {
-                    Label("复位", systemImage: "arrow.counterclockwise")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.glass)
-                .accessibilityIdentifier("model-reset")
-            }
-            if measuring {
-                Text(measurementText)
-                    .font(AtlasTypography.font(.headline).monospacedDigit())
-                    .contentTransition(.numericText())
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 9)
-                    .foregroundStyle(.orange)
-                    .glassEffect(in: .capsule)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier("model-distance")
-            }
-            if hasSplitZoom {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        separationControl
-                        splitZoomControl
+                settings
+                if isPhone {
+                    ViewThatFits(in: .horizontal) {
+                        modeButtons(labels: false, stacked: true)
+                        ScrollView(.horizontal) {
+                            modeButtons(labels: false, stacked: true)
+                        }
+                        .scrollIndicators(.hidden)
                     }
-                    VStack(alignment: .leading, spacing: 7) {
-                        separationControl
-                        splitZoomControl
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        modeButtons(labels: true)
+                        modeButtons(labels: false)
                     }
                 }
-            } else if mode == .exploded {
-                separationControl
-            } else if mode == .xray {
-                modelSlider("外壳不透明度", symbol: mode.symbol, value: $transparency, interval: 0.05...0.85, id: "model-opacity")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        if model.metersPerUnit > 0 {
+            Button {
+                if mode == .exploded { changeMode(.exterior) }
+                measuring.toggle()
+                measurePoints.removeAll()
+            } label: {
+                Label("测距", systemImage: measuring ? "ruler.fill" : "ruler").labelStyle(.iconOnly)
+            }
+            .buttonStyle(.glass)
+            .tint(measuring ? .orange : nil)
+            .accessibilityIdentifier("model-measure")
+        }
+        Button {
+            elevation = elevation > 1.3 ? 0.56 : 1.45
+        } label: {
+            Label("俯视", systemImage: "view.2d").labelStyle(.iconOnly)
+        }
+        .buttonStyle(.glass)
+        Button {
+            reset()
+        } label: {
+            Label("复位", systemImage: "arrow.counterclockwise").labelStyle(.iconOnly)
+        }
+        .buttonStyle(.glass)
+        .accessibilityIdentifier("model-reset")
+    }
+
+    @ViewBuilder
+    private var settings: some View {
+        if measuring {
+            Text(measurementText)
+                .font(AtlasTypography.font(.headline).monospacedDigit())
+                .contentTransition(.numericText())
+                .padding(.horizontal, 13)
+                .padding(.vertical, 9)
+                .foregroundStyle(.orange)
+                .glassEffect(in: .capsule)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("model-distance")
+        }
+        if hasSplitZoom {
             ViewThatFits(in: .horizontal) {
-                modeButtons(labels: true)
-                modeButtons(labels: false)
+                HStack(spacing: 8) {
+                    separationControl
+                    splitZoomControl
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    separationControl
+                    splitZoomControl
+                }
             }
+        } else if mode == .exploded {
+            separationControl
+        } else if mode == .xray {
+            modelSlider("外壳不透明度", symbol: mode.symbol, value: $transparency, interval: 0.05...0.85, id: "model-opacity")
         }
     }
 
@@ -414,14 +481,22 @@ struct ModelWorkspace: View {
         .allowsHitTesting(false)
     }
 
-    private func modeButtons(labels: Bool) -> some View {
+    private func modeButtons(labels: Bool, stacked: Bool = false) -> some View {
         GlassEffectContainer(spacing: 5) {
             HStack(spacing: 4) {
                 ForEach(availableModes) { candidate in
                     Button {
                         changeMode(candidate)
                     } label: {
-                        if labels {
+                        if stacked {
+                            VStack(spacing: 3) {
+                                Image(systemName: candidate.symbol)
+                                Text(candidate.rawValue)
+                                    .font(AtlasTypography.font(.caption, weight: .medium))
+                                    .fixedSize()
+                            }
+                            .frame(minWidth: 40, minHeight: 40)
+                        } else if labels {
                             Label(candidate.rawValue, systemImage: candidate.symbol)
                         } else {
                             Label(candidate.rawValue, systemImage: candidate.symbol).labelStyle(.iconOnly)
@@ -430,6 +505,7 @@ struct ModelWorkspace: View {
                     .buttonStyle(.glass)
                     .font(AtlasTypography.font(.body, weight: .semibold))
                     .tint(mode == candidate ? .mint : nil)
+                    .accessibilityLabel(candidate.rawValue)
                     .accessibilityAddTraits(mode == candidate ? .isSelected : [])
                     .accessibilityIdentifier("model-mode-\(candidate.rawValue)")
                 }
@@ -553,6 +629,11 @@ struct ModelWorkspace: View {
         measurePoints.removeAll()
     }
 
+    private func toggleMode(_ targetMode: ModelMode) {
+        guard !measuring, availableModes.contains(targetMode) else { return }
+        changeMode(mode == targetMode ? .exterior : targetMode)
+    }
+
     private func reset() {
         mode = .exterior
         measuring = false
@@ -579,10 +660,17 @@ private struct ModelTouchSurface: UIViewRepresentable {
     let zoomLabel: String
     let gestureHint: String
     let bottomHUDClearance: CGFloat
+    let upperControls: CGSize
+    let canToggleTransparency: Bool
+    let canToggleSection: Bool
+    let canDirectlySplit: Bool
     let tap: (CGPoint, CGSize) -> Void
     let orbit: (CGVector) -> Void
     let transform: (CGVector, CGFloat, CGSize) -> Void
     let adjustZoom: (Float) -> Void
+    let toggleTransparency: () -> Void
+    let toggleSection: () -> Void
+    let openSplit: (CGFloat) -> Void
 
     func makeUIView(context: Context) -> TouchView {
         let view = TouchView()
@@ -592,6 +680,7 @@ private struct ModelTouchSurface: UIViewRepresentable {
         view.accessibilityIdentifier = "model-viewport"
         view.accessibilityLabel = "三维模型"
         view.accessibilityTraits = .adjustable
+        view.installTapRecognizers()
         return view
     }
 
@@ -600,9 +689,16 @@ private struct ModelTouchSurface: UIViewRepresentable {
         view.onOrbit = orbit
         view.onTransform = transform
         view.onAdjustZoom = adjustZoom
+        view.onToggleTransparency = toggleTransparency
+        view.onToggleSection = toggleSection
+        view.onOpenSplit = openSplit
+        view.canDirectlySplit = canDirectlySplit
         view.bottomHUDClearance = bottomHUDClearance
+        view.upperControls = upperControls
         view.accessibilityValue = zoomLabel
         view.accessibilityHint = gestureHint
+        if view.transparencyTap.isEnabled != canToggleTransparency { view.transparencyTap.isEnabled = canToggleTransparency }
+        if view.sectionTap.isEnabled != canToggleSection { view.sectionTap.isEnabled = canToggleSection }
     }
 
     final class TouchView: UIView {
@@ -610,7 +706,45 @@ private struct ModelTouchSurface: UIViewRepresentable {
         var onOrbit: ((CGVector) -> Void)?
         var onTransform: ((CGVector, CGFloat, CGSize) -> Void)?
         var onAdjustZoom: ((Float) -> Void)?
+        var onToggleTransparency: (() -> Void)?
+        var onToggleSection: (() -> Void)?
+        var onOpenSplit: ((CGFloat) -> Void)?
+        var canDirectlySplit = false
         var bottomHUDClearance: CGFloat = 0
+        var upperControls = CGSize.zero
+
+        private(set) lazy var transparencyTap = makeRecognizer(taps: 2, action: #selector(didTapTransparency))
+        private(set) lazy var sectionTap = makeRecognizer(taps: 2, touches: 2, action: #selector(didTapSection))
+
+        func installTapRecognizers() {
+            let select = makeRecognizer(taps: 1, action: #selector(didTap(_:)))
+            select.require(toFail: transparencyTap)
+            addGestureRecognizer(select)
+            addGestureRecognizer(transparencyTap)
+            addGestureRecognizer(sectionTap)
+        }
+
+        private func makeRecognizer(taps: Int, touches: Int = 1, action: Selector) -> UITapGestureRecognizer {
+            let tap = UITapGestureRecognizer(target: self, action: action)
+            tap.cancelsTouchesInView = false
+            tap.delaysTouchesEnded = false
+            tap.numberOfTapsRequired = taps
+            tap.numberOfTouchesRequired = touches
+            return tap
+        }
+
+        @objc private func didTap(_ recognizer: UITapGestureRecognizer) {
+            onTap?(recognizer.location(in: self), bounds.size)
+        }
+
+        @objc private func didTapTransparency() { onToggleTransparency?() }
+        @objc private func didTapSection() { onToggleSection?() }
+
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            let reserved = CGRect(x: bounds.maxX - upperControls.width, y: bounds.minY,
+                                  width: upperControls.width, height: upperControls.height)
+            return !reserved.contains(point) && super.point(inside: point, with: event)
+        }
 
         override var accessibilityFrame: CGRect {
             get {
@@ -635,13 +769,17 @@ private struct ModelTouchSurface: UIViewRepresentable {
         private struct Pair {
             let center: CGPoint
             let span: CGFloat
+            let vertical: Bool
         }
+
+        private enum PairIntent { case checkingSpread, transform, split }
 
         private var fingers: Set<UITouch> = []
         private var tapStart: CGPoint?
         private var orbitPoint: CGPoint?
         private var panCenter: CGPoint?
         private var pinchSpan: CGFloat?
+        private var pairIntent = PairIntent.transform
         private var isPanning = false
         private var isPinching = false
         private let dragThreshold: CGFloat = 6
@@ -661,7 +799,24 @@ private struct ModelTouchSurface: UIViewRepresentable {
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
             if let pair, let panCenter, let pinchSpan {
                 let translation = delta(from: panCenter, to: pair.center)
-                isPanning = isPanning || hypot(translation.dx, translation.dy) >= dragThreshold
+                let centerMotion = hypot(translation.dx, translation.dy)
+                let separationMotion = pair.span - pinchSpan
+                if pairIntent == .checkingSpread {
+                    // A nearly vertical spread with a steady midpoint differs from zoom and panning.
+                    if pair.vertical, separationMotion >= 20, centerMotion <= max(10, separationMotion * 0.45) {
+                        pairIntent = .split
+                    } else if !pair.vertical || separationMotion <= -dragThreshold || centerMotion >= 14 {
+                        pairIntent = .transform
+                    } else {
+                        return
+                    }
+                }
+                if pairIntent == .split {
+                    self.pinchSpan = pair.span
+                    onOpenSplit?(pair.span / pinchSpan)
+                    return
+                }
+                isPanning = isPanning || centerMotion >= dragThreshold
                 isPinching = isPinching || abs(pair.span - pinchSpan) >= dragThreshold
                 if isPanning { self.panCenter = pair.center }
                 if isPinching { self.pinchSpan = pair.span }
@@ -677,12 +832,6 @@ private struct ModelTouchSurface: UIViewRepresentable {
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            if fingers.count == 1, let start = tapStart, let point = touches.first?.location(in: self) {
-                let translation = delta(from: start, to: point)
-                if hypot(translation.dx, translation.dy) < dragThreshold {
-                    onTap?(point, bounds.size)
-                }
-            }
             finish(touches)
         }
 
@@ -695,9 +844,11 @@ private struct ModelTouchSurface: UIViewRepresentable {
             let points = fingers.map { $0.location(in: self) }
             let first = points[0]
             let second = points[1]
+            let separation = delta(from: first, to: second)
             return Pair(
                 center: CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2),
-                span: max(12, hypot(first.x - second.x, first.y - second.y))
+                span: max(12, hypot(separation.dx, separation.dy)),
+                vertical: abs(separation.dy) >= abs(separation.dx) * 2.2
             )
         }
 
@@ -705,6 +856,7 @@ private struct ModelTouchSurface: UIViewRepresentable {
             let pair = pair
             panCenter = pair?.center
             pinchSpan = pair?.span
+            pairIntent = canDirectlySplit && pair?.vertical == true ? .checkingSpread : .transform
             isPanning = false
             isPinching = false
         }
@@ -737,6 +889,8 @@ private final class ModelSceneController: ObservableObject {
     private static let fov: Float = 46
     private let camera = PerspectiveCamera()
     private let marks = Entity()
+    private let ground: ModelEntity?
+    private var groundOpacity: Float = 1
     private let model: AtlasModel
     let orderedParts: [AtlasPart]
     private let origins: [String: SIMD3<Float>]
@@ -745,6 +899,7 @@ private final class ModelSceneController: ObservableObject {
 
     init(model: AtlasModel, expandsSplitZoom: Bool) {
         self.model = model
+        ground = AtlasModelStage.make(for: model)
         let parts = model.parts.flatMap(\.hierarchy)
         orderedParts = parts
         origins = Dictionary(uniqueKeysWithValues: parts.map { ($0.id, $0.entity.position) })
@@ -752,6 +907,7 @@ private final class ModelSceneController: ObservableObject {
         for part in parts { part.entity.name = part.id }
         let farDistance = model.overviewDistance * (expandsSplitZoom ? 24 : 16)
         camera.camera = PerspectiveCameraComponent(near: 0.005, far: farDistance, fieldOfViewInDegrees: Self.fov, fieldOfViewOrientation: .vertical)
+        if let ground { world.addChild(ground) }
         world.addChild(model.root)
         world.addChild(camera)
         world.addChild(marks)
@@ -768,9 +924,22 @@ private final class ModelSceneController: ObservableObject {
         2 * distance * tan(Float.pi * fov / 360)
     }
 
-    func moveCamera(to point: SIMD3<Float>, angle: Float, height: Float, distance: Float) {
+    func moveCamera(to point: SIMD3<Float>, angle: Float, height: Float, distance: Float, centerLift: Float, dimGround: Bool) {
         let direction = Self.cameraDirection(angle: angle, height: height)
-        camera.look(at: point, from: point + direction * distance, relativeTo: world)
+        let screenUp = simd_cross(direction, SIMD3<Float>(cos(angle), 0, -sin(angle)))
+        let framedCenter = point - screenUp * (Self.frustumHeight(at: distance) * centerLift)
+        let cameraPosition = framedCenter + direction * distance
+        camera.look(at: framedCenter, from: cameraPosition, relativeTo: world)
+        if let ground {
+            let fadeHeight = max(0.04, model.overviewDistance * 0.028)
+            let visibility = min(1, max(0, (cameraPosition.y - ground.position.y) / fadeHeight))
+            let opacity = (dimGround ? Float(0.30) : 1) * visibility * visibility * (3 - 2 * visibility)
+            if abs(opacity - groundOpacity) > 0.008 {
+                groundOpacity = opacity
+                ground.isEnabled = opacity > 0.008
+                ground.components.set(OpacityComponent(opacity: opacity))
+            }
+        }
     }
 
     func hit(at point: CGPoint, in size: CGSize) -> CollisionCastHit? {

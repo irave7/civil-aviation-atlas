@@ -137,6 +137,9 @@ private struct AircraftBuilder {
 
     private var primaryPaint: Finish { Finish(color: palette.primaryUIColor, roughness: 0.36, metallic: 0.09) }
     private var accentPaint: Finish { Finish(color: palette.accentUIColor, roughness: 0.42, metallic: 0.07) }
+    private var nacelleSeam: Finish {
+        Finish(color: Self.color(0.35, 0.39, 0.42), roughness: 0.56, metallic: 0.23)
+    }
     private var nacelleFinish: Finish { palette.pattern == .wideBelly || palette.pattern == .fullBody ? primaryPaint : fuselageFinish }
 
     private var fuselageStations: [Station] {
@@ -157,7 +160,7 @@ private struct AircraftBuilder {
         for part in parts { root.addChild(part.entity) }
         return AtlasModel(root: root, parts: parts, overviewTarget: p(length / 2, 1), overviewDistance: 114,
                           metersPerUnit: 1,
-                          sourceNote: "按空客公开尺寸和航司公开客舱资料制作的比例模型。客舱、涂装和机械细节为简化示意，测距基于模型几何。")
+                          sourceNote: "按空客公开尺寸和航司公开客舱资料制作的比例模型。客舱、涂装和机械细节为简化示意，测距基于模型几何。", stageGroundY: -5.56)
     }
 
     private func p(_ x: Float, _ y: Float = 0, _ z: Float = 0) -> Point {
@@ -642,7 +645,12 @@ private struct AircraftBuilder {
         let entry = [Station(x - 0.015, y, 1.51, 1.51), Station(x + 0.17, y, 1.70, 1.71), Station(x + 0.43, y, 1.84, 1.83)]
         let duct = [Station(x - 0.02, y, 1.51, 1.51), Station(x + 0.22, y, 1.55, 1.55), Station(x + 1.25, y, 1.52, 1.52)]
         let shell = Entity()
-        shell.addChild(tube(profiles, z: z, finish: nacelleFinish))
+        shell.addChild(tube(profiles, z: z, slices: 76, finish: nacelleFinish))
+        shell.addChild(tube([
+            Station(x + 1.64, y + 0.037, 1.939, 1.908),
+            Station(x + 1.73, y + 0.041, 1.945, 1.915),
+            Station(x + 1.77, y + 0.042, 1.941, 1.910)
+        ], z: z, slices: 76, finish: nacelleSeam))
         installTubeColliders(on: shell, stations: profiles, sideOffset: z)
         shell.addChild(tube(entry, z: z, finish: metal))
         shell.addChild(tube(duct, z: z, inner: true, finish: carbon))
@@ -953,7 +961,7 @@ private extension AircraftBuilder {
         for part in parts { root.addChild(part.entity) }
         return AtlasModel(root: root, parts: parts, overviewTarget: p(length / 2, spec.hasUpperDeck ? 1.4 : 0.75),
                           overviewDistance: max(length, span) * 1.72, metersPerUnit: 1,
-                          sourceNote: "按制造商公布机长与翼展制作的比例示意。客舱、起落架、发动机内部与航司配色用于说明整体布局，测距基于模型几何。")
+                          sourceNote: "按制造商公布机长与翼展制作的比例示意。客舱、起落架、发动机内部与航司配色用于说明整体布局，测距基于模型几何。", stageGroundY: spec.groundY - 0.025)
     }
 
     private func variantFuselage(_ spec: Variant) -> [Station] {
@@ -1342,7 +1350,12 @@ private extension AircraftBuilder {
         }
         let nacelle = [ring(0, 0.85, flat: true), ring(0.038, 0.94, flat: true), ring(0.14, 1, flat: true),
                        ring(0.34, 1, flat: true), ring(0.66, 0.90, rise: 0.06, flat: true), ring(0.80, 0.73, rise: 0.08), ring(0.84, 0.67, rise: 0.08)]
-        shell.addChild(tube(nacelle, z: z, finish: nacelleFinish))
+        shell.addChild(tube(nacelle, z: z, slices: 76, finish: nacelleFinish))
+        shell.addChild(tube([
+            ring(0.300, 1.005, flat: true),
+            ring(0.308, 1.007, flat: true),
+            ring(0.312, 1.005, flat: true)
+        ], z: z, slices: 76, finish: nacelleSeam))
         shell.addChild(tube([ring(-0.006, 0.79, flat: true), ring(0.02, 0.87, flat: true), ring(0.096, 0.98, flat: true)], z: z, finish: metal))
         let inlet = [ring(-0.008, 0.79, flat: true), ring(0.04, 0.82, flat: true), ring(0.24, 0.82, flat: true)]
         shell.addChild(tube(inlet, z: z, inner: true, finish: carbon))

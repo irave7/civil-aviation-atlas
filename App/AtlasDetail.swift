@@ -1,5 +1,6 @@
 import MapKit
 import SwiftUI
+import UIKit
 
 private enum AirportPanel: String, CaseIterable, Identifiable {
     case model = "三维模型"
@@ -41,12 +42,22 @@ struct AirportDetail: View {
     let onAirport: (Airport) -> Void
     let onAircraft: (AircraftProfile) -> Void
     let setImmersive: (Bool) -> Void
-    @State private var selected = AirportPanel.model
+    @State private var selected: AirportPanel = DistributionPolicy.airportSiteModelsAvailable ? .model : .overview
+    #if !MAINLAND_DISTRIBUTION
     @State private var model: AtlasModel?
+    #endif
     @State private var highlightedRoute: FlightRoute?
 
     private var availablePanels: [AirportPanel] {
-        AirportPanel.allCases.filter { $0 != .plan || airport.hasBasicModel || airport.hasSiteModel }
+        AirportPanel.allCases.filter { panel in
+            switch panel {
+            case .model: DistributionPolicy.airportSiteModelsAvailable
+            case .plan: DistributionPolicy.airportSiteModelsAvailable && DistributionPolicy.mapsAvailable
+                && (airport.hasBasicModel || airport.hasSiteModel)
+            case .imagery: DistributionPolicy.airportSiteModelsAvailable && DistributionPolicy.mapsAvailable
+            case .routes, .overview: true
+            }
+        }
     }
 
     var body: some View {
@@ -64,6 +75,9 @@ struct AirportDetail: View {
         Group {
             switch selected {
             case .model:
+                #if MAINLAND_DISTRIBUTION
+                AirportOverview(airport: airport)
+                #else
                 if let model {
                     ModelWorkspace(
                         model: model, title: airport.displayName, subtitle: "\(airport.displayCode)  /  \(airport.icao)",
@@ -74,10 +88,15 @@ struct AirportDetail: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .task { model = AirportModels.make(for: airport) }
                 }
+                #endif
             case .imagery:
                 AirportImagery(airport: airport)
             case .plan:
+                #if MAINLAND_DISTRIBUTION
+                AirportOverview(airport: airport)
+                #else
                 AirportPlanView(airport: airport)
+                #endif
             case .routes:
                 AirportRoutePanel(airport: airport, library: library, onAirport: onAirport, onAircraft: onAircraft)
             case .overview:
@@ -88,9 +107,9 @@ struct AirportDetail: View {
 
     private var airportHeader: some View {
         VStack(spacing: 0) {
-            AtlasPanelBar {
+            AtlasPanelBar { compact in
                 ForEach(availablePanels) { panel in
-                    PanelButton(title: panel.rawValue, symbol: panel.symbol, selected: selected == panel, id: panel.controlID) {
+                    PanelButton(title: panel.rawValue, symbol: panel.symbol, selected: selected == panel, id: panel.controlID, compact: compact) {
                         selectPanel(panel)
                     }
                 }
@@ -107,7 +126,11 @@ struct AirportDetail: View {
 
     private func openAirportFromRoute(_ next: Airport) {
         highlightedRoute = nil
-        if next.id == airport.id { selectPanel(.model) } else { onAirport(next) }
+        if next.id == airport.id {
+            selectPanel(DistributionPolicy.airportSiteModelsAvailable ? .model : .overview)
+        } else {
+            onAirport(next)
+        }
     }
 
     private func openAircraftFromRoute(_ next: AircraftProfile) {
@@ -135,6 +158,7 @@ struct AircraftDetail: View {
     @State private var choosingConfiguration = false
     @State private var livery = AircraftLiveries.reference
     @State private var choosingLivery = false
+    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
 
     var body: some View {
         Group {
@@ -167,7 +191,7 @@ struct AircraftDetail: View {
                             Text(profile.title).font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
                         }
                         Text(profile.description).font(AtlasTypography.font(.body))
-                        HStack(alignment: .top, spacing: 15) {
+                        adaptiveFacts {
                             AtlasFact(label: "机身长", value: "\(profile.lengthM.formatted()) m", symbol: "arrow.left.and.right")
                             AtlasFact(label: "翼展", value: "\(profile.wingspanM.formatted()) m", symbol: "arrow.up.and.down")
                         }
@@ -187,18 +211,37 @@ struct AircraftDetail: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            AtlasPanelBar {
-                PanelButton(title: "三维模型", symbol: "cube", selected: page == .model, id: "aircraft-mode-model") { page = .model }
-                PanelButton(title: "执飞航线", symbol: "point.topleft.down.to.point.bottomright.curvepath", selected: page == .routes, id: "aircraft-mode-routes") { page = .routes }
-                PanelButton(title: "机型资料", symbol: "info.circle", selected: page == .data, id: "aircraft-mode-data") { page = .data }
+            AtlasPanelBar { compact in
+                PanelButton(title: "三维模型", symbol: "cube", selected: page == .model, id: "aircraft-mode-model", compact: compact) { page = .model }
+                PanelButton(title: "执飞航线", symbol: "point.topleft.down.to.point.bottomright.curvepath", selected: page == .routes, id: "aircraft-mode-routes", compact: compact) { page = .routes }
+                PanelButton(title: "机型资料", symbol: "info.circle", selected: page == .data, id: "aircraft-mode-data", compact: compact) { page = .data }
             }
         }
         .toolbar {
-            if page == .model && !profile.configurations.isEmpty {
+            if page == .model && !profile.configurations.isEmpty && isPhone {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu("外观与客舱", systemImage: "slider.horizontal.3") {
+                        liveryButton
+                        Button("客舱布局", systemImage: "chair.lounge") { choosingConfiguration = true }
+                            .accessibilityIdentifier("aircraft-configuration")
+                    }
+                    .accessibilityIdentifier("aircraft-model-options")
+                    .sheet(isPresented: $choosingConfiguration) {
+                        NavigationStack {
+                            List { configurationOptions }
+                                .navigationTitle("客舱布局")
+                                .navigationBarTitleDisplayMode(.inline)
+                                .toolbar {
+                                    ToolbarItem(placement: .confirmationAction) {
+                                        Button("完成") { choosingConfiguration = false }
+                                    }
+                                }
+                        }
+                    }
+                }
+            } else if page == .model && !profile.configurations.isEmpty {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("涂装", systemImage: "paintpalette") { choosingLivery = true }
-                        .accessibilityValue(livery.name)
-                        .accessibilityIdentifier("aircraft-livery")
+                    liveryButton
                     Button {
                         choosingConfiguration.toggle()
                     } label: {
@@ -208,20 +251,7 @@ struct AircraftDetail: View {
                     .popover(isPresented: $choosingConfiguration, arrowEdge: .top) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("客舱布局").font(AtlasTypography.font(.headline))
-                            ForEach(profile.configurations) { item in
-                                Button {
-                                    choosingConfiguration = false
-                                    set(item)
-                                } label: {
-                                    Label("\(item.airline) · \(item.name)", systemImage: item.id == configuration?.id ? "checkmark" : "airplane")
-                                        .font(AtlasTypography.font(.body))
-                                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                                        .contentShape(.rect)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityAddTraits(item.id == configuration?.id ? .isSelected : [])
-                                .accessibilityIdentifier("configuration-\(item.id)")
-                            }
+                            configurationOptions
                         }
                         .padding(20)
                         .frame(minWidth: 240, idealWidth: 260)
@@ -242,6 +272,29 @@ struct AircraftDetail: View {
         }
         .onChange(of: page) { _, current in
             setImmersive(current == .model)
+        }
+    }
+
+    private var liveryButton: some View {
+        Button("涂装", systemImage: "paintpalette") { choosingLivery = true }
+            .accessibilityValue(livery.name)
+            .accessibilityIdentifier("aircraft-livery")
+    }
+
+    private var configurationOptions: some View {
+        ForEach(profile.configurations) { item in
+            Button {
+                choosingConfiguration = false
+                set(item)
+            } label: {
+                Label("\(item.airline) · \(item.name)", systemImage: item.id == configuration?.id ? "checkmark" : "airplane")
+                    .font(AtlasTypography.font(.body))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(item.id == configuration?.id ? .isSelected : [])
+            .accessibilityIdentifier("configuration-\(item.id)")
         }
     }
 
@@ -361,9 +414,11 @@ private struct AirportOverview: View {
 
     private var sources: [AtlasSource] {
         var entries = airport.sources ?? [AtlasSource(title: "OurAirports · 开放机场数据", url: "https://ourairports.com/data/")]
-        entries.append(contentsOf: AirportSiteCatalog.modelDataSources(for: airport))
-        if AirportSiteCatalog.hasTerrain(for: airport), let source = AirportSiteCatalog.terrainSource {
-            entries.append(source)
+        if DistributionPolicy.airportSiteModelsAvailable {
+            entries.append(contentsOf: AirportSiteCatalog.modelDataSources(for: airport))
+            if AirportSiteCatalog.hasTerrain(for: airport), let source = AirportSiteCatalog.terrainSource {
+                entries.append(source)
+            }
         }
         return entries
     }
@@ -397,7 +452,7 @@ private struct AirportOverview: View {
                     }
                 }
                 if let description = airport.description { Text(description).lineSpacing(4) }
-                HStack(alignment: .top, spacing: 12) {
+                adaptiveFacts {
                     AtlasFact(label: "跑道记录", value: runways.count.formatted(), symbol: "equal")
                     if let elevation = airport.elevationFt {
                         AtlasFact(label: "机场海拔", value: "\(Int((Double(elevation) * 0.3048).rounded()).formatted()) m", symbol: "mountain.2")
@@ -423,7 +478,9 @@ private struct AirportOverview: View {
                         }
                     }
                 } else {
-                    Text("公开目录尚未收录此机场的跑道尺寸。可在实景页查看卫星影像。")
+                    Text(DistributionPolicy.mapsAvailable && DistributionPolicy.airportSiteModelsAvailable
+                         ? "公开目录尚未收录此机场的跑道尺寸。可在实景页查看卫星影像。"
+                         : "公开目录尚未收录此机场的跑道尺寸。")
                         .foregroundStyle(.secondary)
                 }
                 if let terminals = airport.terminals, !terminals.isEmpty {
@@ -445,19 +502,36 @@ private struct AirportOverview: View {
 }
 
 private struct AtlasPanelBar<Content: View>: View {
-    @ViewBuilder let content: Content
+    @ViewBuilder let content: (Bool) -> Content
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     var body: some View {
-        ScrollView(.horizontal) {
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 7) { content }
-                    .padding(.horizontal, 15)
+        Group {
+            if horizontalSizeClass == .compact {
+                ViewThatFits(in: .horizontal) {
+                    compactPanels
+                    ScrollView(.horizontal) { compactPanels }.scrollIndicators(.hidden)
+                }
+            } else {
+                ScrollView(.horizontal) {
+                    GlassEffectContainer(spacing: 8) {
+                        HStack(spacing: 7) { content(false) }
+                            .padding(.horizontal, 15)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .scrollIndicators(.hidden)
+                .padding(.vertical, 6)
             }
-            .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.hidden)
-        .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    private var compactPanels: some View {
+        HStack(spacing: 4) { content(true) }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
     }
 }
 
@@ -466,9 +540,33 @@ private struct PanelButton: View {
     let symbol: String
     let selected: Bool
     let id: String
+    let compact: Bool
     let action: () -> Void
 
     var body: some View {
+        if compact {
+            Button(action: action) {
+                VStack(spacing: 3) {
+                    Image(systemName: symbol).font(AtlasTypography.font(.body, weight: .semibold))
+                    Text(title).font(AtlasTypography.font(.caption, weight: .medium))
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .foregroundStyle(selected ? Color.teal : Color.secondary)
+                .padding(.horizontal, 8)
+                .frame(minWidth: 44, minHeight: 48)
+                .background(selected ? Color.teal.opacity(0.10) : .clear, in: .rect(cornerRadius: 12))
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier(id)
+        } else {
+            glassButton
+        }
+    }
+
+    private var glassButton: some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
         }
@@ -476,6 +574,13 @@ private struct PanelButton: View {
         .tint(selected ? .teal : nil)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier(id)
+    }
+}
+
+private func adaptiveFacts<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 12) { content() }
+        VStack(alignment: .leading, spacing: 8) { content() }
     }
 }
 

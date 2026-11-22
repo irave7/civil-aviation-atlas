@@ -48,6 +48,13 @@ final class AtlasFavorites {
         case .aircraft: aircraftIDs
         }
     }
+
+    func clear() {
+        airportIDs.removeAll()
+        aircraftIDs.removeAll()
+        defaults.removeObject(forKey: Kind.airport.defaultsKey)
+        defaults.removeObject(forKey: Kind.aircraft.defaultsKey)
+    }
 }
 
 struct AtlasFavoriteButton: View {

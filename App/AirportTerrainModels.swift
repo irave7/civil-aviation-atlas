@@ -53,7 +53,7 @@ enum AirportTerrainModels {
             : "地形由开放高程栅格生成，场址位置来自 OurAirports。此机场以地形与位置为主，跑道和建筑可切换「卫星实景」查看。"
         return AtlasModel(root: root, parts: parts, overviewTarget: [0, centerAltitude * 0.55, 0],
                           overviewDistance: horizontal * 3.6, metersPerUnit: grid == nil ? 0 : AirportSiteCatalog.metersPerUnit,
-                          sourceNote: note)
+                          sourceNote: note, stageSurface: .land, stageGroundY: -0.14)
     }
 
     private static func drawTerrain(

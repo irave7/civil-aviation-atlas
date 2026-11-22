@@ -22,7 +22,7 @@ enum AirportModels {
         let root = Entity()
         root.name = "hong-kong-airfield"
         let context = layer("hong-kong-site-context", on: root)
-        addWater(to: context, extent: 105)
+        addWaterGrid(to: context, extent: 105)
 
         // Diagram-local +X follows published runway bearing 070.90° true.
         // Runway centrelines use midpoint projections of the published thresholds.
@@ -63,7 +63,7 @@ enum AirportModels {
             root: root, parts: [terminal, tower, runways], overviewTarget: [-2.5, 0, -5.3], overviewDistance: 79,
             metersPerUnit: metersPerUnit,
             sourceNote: "跑道尺寸与方向见香港民航处 AIP VHHH AD 2.12（2026-10-29）。\(exteriorSource)机场岛、机坪及塔台依据公开图示重建，室内是公开旅客区的空间示意。",
-            context: context
+            context: context, stageSurface: .water, stageGroundY: -0.468
         )
     }
 
@@ -504,7 +504,7 @@ enum AirportModels {
         let tallest = plan.tallestBuilding
         return AtlasModel(root: root, parts: siteParts + runwayParts, overviewTarget: [center.x, tallest * 0.38, center.y],
                           overviewDistance: max(5.8, span * 1.48, tallest * 2.45), metersPerUnit: metersPerUnit,
-                          sourceNote: siteNote + runwayNote + (attribution.isEmpty ? "" : "\n" + attribution), context: context)
+                          sourceNote: siteNote + runwayNote + (attribution.isEmpty ? "" : "\n" + attribution), context: context, stageSurface: .land, stageGroundY: -0.033)
     }
 
     private static func addIsland(_ points: [SIMD2<Float>], to root: Entity) {
@@ -518,9 +518,8 @@ enum AirportModels {
         batch.install(on: root, label: "airport-island-and-seawall")
     }
 
-    private static func addWater(to root: Entity, extent: Float) {
+    private static func addWaterGrid(to root: Entity, extent: Float) {
         let batch = BatchSet()
-        batch.box([extent, 0.025, extent], [0, -0.47, 0], .deepWater)
         let span = extent * 0.494
         let step = max(1.4, extent / 24)
         for p in stride(from: -span, through: span, by: step) {

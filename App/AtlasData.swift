@@ -32,8 +32,8 @@ struct Airport: Codable, Identifiable, Hashable {
     let name: String
     let city: String
     let country: String
-    let lat: Double
-    let lon: Double
+    private let latitude: Double?
+    private let longitude: Double?
     let elevationFt: Int?
     let runways: [Runway]?
     let terminals: [AirportTerminal]?
@@ -47,10 +47,23 @@ struct Airport: Codable, Identifiable, Hashable {
     let localizedNameSource: String?
     let countryCode: String?
     let type: String?
+    let scheduledService: Bool?
     let civilUse: String?
     let publicAccess: String?
     let operatingStatus: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case id, iata, icao, name, city, country
+        case latitude = "lat"
+        case longitude = "lon"
+        case elevationFt, runways, terminals, description, opened, sources, featured
+        case localizedName, localizedCity, localizedNameAliases, localizedNameSource
+        case countryCode, type, scheduledService, civilUse, publicAccess, operatingStatus
+    }
+
+    var hasCoordinates: Bool { latitude != nil && longitude != nil }
+    var lat: Double { latitude ?? .nan }
+    var lon: Double { longitude ?? .nan }
     var displayName: String { localizedName ?? name }
     var displayCity: String { localizedCity ?? (city.isEmpty ? country : city) }
     var displayCode: String { iata.isEmpty ? (icao.isEmpty ? id : icao) : iata }
@@ -150,8 +163,9 @@ final class AtlasLibrary {
 
     private init(bundle: Bundle = .main) {
         self.bundle = bundle
-        let url = bundle.url(forResource: "airport-data", withExtension: "json")
-            ?? bundle.url(forResource: "airport-data", withExtension: "json", subdirectory: "Resources")
+        let resource = DistributionPolicy.airportCatalog
+        let url = bundle.url(forResource: resource, withExtension: "json")
+            ?? bundle.url(forResource: resource, withExtension: "json", subdirectory: "Resources")
         let loadedCatalog = url.flatMap { location in
             (try? Data(contentsOf: location)).flatMap { try? JSONDecoder().decode(AirportCatalog.self, from: $0) }
         }

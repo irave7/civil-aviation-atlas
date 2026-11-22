@@ -37,6 +37,7 @@
 				6AF006C10000000000000004 /* App */,
 				6AF006C10000000000000012 /* UITests */,
 				6AF006C10000000000000010 /* App.xcconfig */,
+				6AF006C10000000000000020 /* MainlandReview.xcconfig */,
 				6AF006C10000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -95,6 +96,7 @@
 			buildConfigurations = (
 				6AF006C1000000000000000B /* Debug */,
 				6AF006C1000000000000000C /* Release */,
+				6AF006C1000000000000001D /* MainlandReview */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -104,6 +106,7 @@
 			buildConfigurations = (
 				6AF006C1000000000000000D /* Debug */,
 				6AF006C1000000000000000E /* Release */,
+				6AF006C1000000000000001E /* MainlandReview */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -224,6 +227,7 @@
 			buildConfigurations = (
 				6AF006C1000000000000001A /* Debug */,
 				6AF006C1000000000000001B /* Release */,
+				6AF006C1000000000000001F /* MainlandReview */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -244,6 +248,39 @@
 			isa = PBXFileReference;
 			lastKnownFileType = text.xcconfig;
 			path = Build/UITests.xcconfig;
+			sourceTree = SOURCE_ROOT;
+		};
+		6AF006C1000000000000001D /* MainlandReview */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = MainlandReview;
+		};
+		6AF006C1000000000000001E /* MainlandReview */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6AF006C10000000000000020 /* MainlandReview.xcconfig */;
+			buildSettings = {};
+			name = MainlandReview;
+		};
+		6AF006C1000000000000001F /* MainlandReview */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6AF006C1000000000000001C /* UITests.xcconfig */;
+			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MAINLAND_DISTRIBUTION";
+			};
+			name = MainlandReview;
+		};
+		6AF006C10000000000000020 /* MainlandReview.xcconfig */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Build/MainlandReview.xcconfig;
 			sourceTree = SOURCE_ROOT;
 		};
 	};

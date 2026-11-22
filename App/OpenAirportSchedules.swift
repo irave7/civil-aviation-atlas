@@ -4,9 +4,10 @@ import SwiftUI
 struct OpenAirportSchedules: View {
     let airport: Airport
     let library: AtlasLibrary
+    let context: FlightBoardContext?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var direction = TaoyuanFlight.Direction.departure
+    @State private var direction: TaoyuanFlight.Direction
     @State private var flights: [TaoyuanFlight] = []
     @State private var isLoading = false
     @State private var failure: String?
@@ -15,28 +16,45 @@ struct OpenAirportSchedules: View {
 
     static func supports(_ iata: String) -> Bool { iata.uppercased() == "TPE" }
 
+    init(airport: Airport, library: AtlasLibrary, context: FlightBoardContext? = nil) {
+        self.airport = airport
+        self.library = library
+        self.context = context
+        _direction = State(initialValue: context?.isArrival == true ? .arrival : .departure)
+    }
+
     private var displayedFlights: [TaoyuanFlight] {
-        flights.filter { $0.direction == direction }
+        flights.filter { flight in
+            guard flight.direction == direction else { return false }
+            guard let context else { return true }
+            return context.matches(number: flight.flightNumber, airport: flight.airportCode)
+                && context.matches(dayForTimestamp: flight.scheduledAt, in: TaoyuanFlight.airportTimeZone)
+        }
     }
 
     var body: some View {
         NavigationStack {
             List {
+                if let context { PublishedFlightFacts(context: context, library: library) }
                 Section {
-                    Picker("航班方向", selection: $direction) {
-                        Text("出发").tag(TaoyuanFlight.Direction.departure)
-                        Text("到达").tag(TaoyuanFlight.Direction.arrival)
+                    if let context {
+                        LabeledContent("机场当地日期", value: context.day)
+                    } else {
+                        Picker("航班方向", selection: $direction) {
+                            Text("出发").tag(TaoyuanFlight.Direction.departure)
+                            Text("到达").tag(TaoyuanFlight.Direction.arrival)
+                        }
+                        .pickerStyle(.segmented)
+                        .listRowBackground(Color.clear)
                     }
-                    .pickerStyle(.segmented)
-                    .listRowBackground(Color.clear)
                 } footer: {
                     Text("时间采用桃园当地时间（UTC+8）。机型按机场公布内容显示。")
                 }
                 Section {
                     if isLoading && flights.isEmpty {
                         ProgressView("正在读取机场数据")
-                    } else if displayedFlights.isEmpty {
-                        ContentUnavailableView("暂无航班记录", systemImage: "airplane")
+                    } else if displayedFlights.isEmpty && failure == nil {
+                        ContentUnavailableView("暂无匹配航班", systemImage: "airplane", description: Text("机场数据仅包含近期公布的航班。"))
                     } else {
                         ForEach(displayedFlights) { flight in
                             flightRow(flight)
@@ -55,26 +73,13 @@ struct OpenAirportSchedules: View {
                             .font(AtlasTypography.font(.subheadline))
                     }
                 }
-                Section {
-                    Link(destination: TaoyuanFlight.officialBoard(direction)) {
-                        Label(direction == .departure ? "查看机场出发航班" : "查看机场到达航班", systemImage: "arrow.up.right.square")
-                    }
-                    if let backup = AirportFlightLinks.radarBoardURL(airport.iata, arrivals: direction == .arrival) {
-                        Link(destination: backup) {
-                            Label("Flightradar24 备用看板", systemImage: "arrow.up.right.square")
-                        }
-                    }
-                } header: {
-                    Text("实时航班看板")
-                } footer: {
-                    Text("官网航班板和开放数据服务分别更新。")
-                }
                 Section("数据来源") {
                     Link("桃園國際機場股份有限公司（2026） · 桃園國際機場即時航班第二版", destination: TaoyuanFlight.dataset)
                     Link("政府資料開放授權條款第 1 版", destination: TaoyuanFlight.license)
                 }
             }
-            .navigationTitle("桃园机场航班动态")
+            .accessibilityIdentifier("flight-details-board")
+            .navigationTitle(context?.flightNumber ?? "桃园机场航班动态")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await refresh() }
             .task(id: refreshToken) { await refresh() }
@@ -135,7 +140,7 @@ struct OpenAirportSchedules: View {
         } catch let error as TaoyuanFlight.FeedError {
             failure = error.message
         } catch {
-            failure = "开放数据服务暂时无法连接。可通过机场官网查看航班。"
+            failure = "开放数据服务暂时无法连接。可稍后刷新。"
         }
     }
 }
@@ -159,9 +164,9 @@ private struct TaoyuanFlight: Identifiable, Sendable {
 
         var message: String {
             switch self {
-            case .unavailable: "机场开放数据服务暂时无法读取。可通过机场官网查看航班。"
-            case .unrecognized: "机场返回的数据格式暂时无法识别。可通过机场官网查看航班。"
-            case .expired: "机场开放数据返回了较早的时刻表。可通过机场官网查看当前航班。"
+            case .unavailable: "机场开放数据服务暂时无法读取。"
+            case .unrecognized: "机场返回的数据格式暂时无法识别。"
+            case .expired: "机场开放数据返回了较早的时刻表。"
             }
         }
     }
@@ -180,14 +185,7 @@ private struct TaoyuanFlight: Identifiable, Sendable {
     static let dataset = URL(string: "https://data.gov.tw/dataset/177644")!
     static let license = URL(string: "https://data.gov.tw/en/license")!
     private static let feed = URL(string: "https://odp.taoyuan-airport.com/dataset/2025102001?format=csv")!
-    private static let airportTimeZone = TimeZone(identifier: "Asia/Taipei")!
-
-    static func officialBoard(_ direction: Direction) -> URL {
-        switch direction {
-        case .departure: URL(string: "https://www.taoyuan-airport.com/flight_depart")!
-        case .arrival: URL(string: "https://www.taoyuan-airport.com/flight_arrival")!
-        }
-    }
+    static let airportTimeZone = TimeZone(identifier: "Asia/Taipei")!
 
     static func format(_ date: Date) -> String {
         let format = Date.FormatStyle(date: .numeric, time: .shortened, locale: Locale(identifier: "zh_CN"), timeZone: airportTimeZone)
@@ -195,6 +193,7 @@ private struct TaoyuanFlight: Identifiable, Sendable {
     }
 
     static func download() async throws -> [TaoyuanFlight] {
+        guard DistributionPolicy.liveFlightsAvailable else { throw FeedError.unavailable }
         var request = URLRequest(url: feed, cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 12)
         request.setValue("text/csv", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)

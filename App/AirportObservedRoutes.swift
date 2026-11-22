@@ -50,8 +50,9 @@ struct AirportObservedRouteLibrary {
     private let routesByAirport: [String: [FlightRoute]]
 
     init(bundle: Bundle) {
-        let url = bundle.url(forResource: "observed-routes", withExtension: "json")
-            ?? bundle.url(forResource: "observed-routes", withExtension: "json", subdirectory: "Resources")
+        let resource = DistributionPolicy.observedRoutesCatalog
+        let url = bundle.url(forResource: resource, withExtension: "json")
+            ?? bundle.url(forResource: resource, withExtension: "json", subdirectory: "Resources")
         let dataset = url.flatMap { try? Data(contentsOf: $0, options: [.mappedIfSafe]) }
             .flatMap { try? JSONDecoder().decode(Dataset.self, from: $0) }
         coverage = dataset.map { "\($0.coverage) · 整理于 \($0.asOf)" }

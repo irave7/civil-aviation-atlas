@@ -1,22 +1,41 @@
-import ImageIO
 import MapKit
 import SwiftUI
+#if !MAINLAND_DISTRIBUTION
+import ImageIO
 import UniformTypeIdentifiers
+#endif
 
+#if MAINLAND_DISTRIBUTION && !MAINLAND_APPROVED_MAPS
+struct AirportImagery: View {
+    let airport: Airport
+
+    var body: some View {
+        ContentUnavailableView("暂无实景", systemImage: "globe.asia.australia", description: Text(airport.displayName))
+            .accessibilityIdentifier("mainland-airport-imagery-unavailable")
+    }
+}
+#else
 private enum AirportImagerySource: String, Identifiable {
     case apple = "Apple 卫星影像"
+#if MAINLAND_DISTRIBUTION
+    case offline = "影像暂不可用"
+#else
     case sentinel = "Sentinel-2 历史卫星影像"
     case offline = "离线机场图"
+#endif
 
     var id: Self { self }
 
     var symbol: String {
         switch self {
         case .apple: "globe.asia.australia"
+#if !MAINLAND_DISTRIBUTION
         case .sentinel: "globe"
+#endif
         case .offline: "map"
         }
     }
+
 }
 
 private enum AirportImageryLoad: Equatable {
@@ -25,30 +44,61 @@ private enum AirportImageryLoad: Equatable {
 
 struct AirportImagery: View {
     let airport: Airport
+#if !MAINLAND_DISTRIBUTION
     private let plan: AirportSitePlan
+#endif
     private let siteCamera: MapCamera
     @State private var currentCamera: MapCamera
     @State private var cameraChange = 0
     @State private var lastTilt = 46.0
-    @State private var source = AirportImagerySource.apple
+    @State private var source: AirportImagerySource
     @State private var status = AirportImageryLoad.loading
     @State private var didRender = false
     @State private var attempt = 0
     @State private var automatic = true
+#if !MAINLAND_DISTRIBUTION
     @State private var lookAround: MKLookAroundScene?
     @State private var showLookAround = false
     @State private var showPhotos = false
+#endif
 
     init(airport: Airport) {
         self.airport = airport
+#if MAINLAND_DISTRIBUTION
+        let initial = MapCamera(centerCoordinate: airport.coordinate, distance: 5_800)
+#else
         let airportPlan = AirportSiteCatalog.plan(for: airport)
         plan = airportPlan
         let initial = Self.fitAirport(airport, plan: airportPlan)
+#endif
         siteCamera = initial
         _currentCamera = State(initialValue: initial)
+        _source = State(initialValue: Self.preferredSource(for: airport))
     }
 
     private var isTilted: Bool { currentCamera.pitch > 6 }
+
+    private static func preferredSource(for airport: Airport) -> AirportImagerySource {
+#if MAINLAND_DISTRIBUTION
+        .apple
+#else
+        airport.countryCode == "CN" ? .apple : .sentinel
+#endif
+    }
+
+    private var sourceOptions: [AirportImagerySource] {
+#if MAINLAND_DISTRIBUTION
+        [.apple, .offline]
+#else
+        airport.countryCode == "CN" ? [.apple, .offline] : [.sentinel, .apple, .offline]
+#endif
+    }
+
+    private var automaticFallback: AirportImagerySource? {
+        guard let index = sourceOptions.firstIndex(of: source) else { return nil }
+        let next = sourceOptions.index(after: index)
+        return sourceOptions.indices.contains(next) ? sourceOptions[next] : nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,13 +113,14 @@ struct AirportImagery: View {
         .background(Color(red: 0.063, green: 0.104, blue: 0.145))
         .colorScheme(.dark)
         .tint(.mint)
+#if !MAINLAND_DISTRIBUTION
         .sheet(isPresented: $showPhotos) { AirportPhotos(airport: airport) }
         .lookAroundViewer(isPresented: $showLookAround, initialScene: lookAround)
         .task(id: airport.id) { await requestStreetView() }
+#endif
         .task(id: attempt) {
-            guard source != .offline else { return }
+            guard let fallback = automaticFallback else { return }
             let startingAttempt = attempt
-            let fallback: AirportImagerySource = source == .apple ? .sentinel : .offline
             do { try await Task.sleep(for: .seconds(9)) } catch { return }
             guard attempt == startingAttempt && !didRender else { return }
             if automatic { switchSource(fallback, automatic: true) }
@@ -80,6 +131,16 @@ struct AirportImagery: View {
     @ViewBuilder
     private var viewport: some View {
         if source == .offline {
+#if MAINLAND_DISTRIBUTION
+            ContentUnavailableView {
+                Label("卫星影像暂不可用", systemImage: "globe.asia.australia")
+            } description: {
+                Text("检查网络连接后重新加载影像。")
+            } actions: {
+                Button("重新加载") { switchSource(.apple, automatic: true) }
+            }
+            .accessibilityIdentifier("mainland-satellite-unavailable")
+#else
             if !plan.features.isEmpty || !plan.runways.isEmpty {
                 AirportPlanView(airport: airport)
             } else {
@@ -91,6 +152,7 @@ struct AirportImagery: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("airport-offline-location")
             }
+#endif
         } else {
             mapView(attempt: attempt)
         }
@@ -117,19 +179,21 @@ struct AirportImagery: View {
     private var controls: some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(source == .offline ? "离线机场图" : "卫星影像") · \(airport.displayCode) · \(airport.displayName)")
+                Text("\(source == .offline ? source.rawValue : "卫星影像") · \(airport.displayCode) · \(airport.displayName)")
                     .font(AtlasTypography.font(.caption, weight: .semibold))
                     .lineLimit(2)
                 Text(statusText)
                     .font(AtlasTypography.font(.caption2))
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("airport-imagery-status")
+#if !MAINLAND_DISTRIBUTION
                 if source == .sentinel {
                     Link("EOxCloudless — EOX IT Services GmbH", destination: URL(string: "https://cloudless.eox.at/")!)
                         .foregroundStyle(.mint)
                     Link("Contains modified Copernicus Sentinel data 2016 & 2017 · CC BY 4.0", destination: URL(string: "https://creativecommons.org/licenses/by/4.0/")!)
                         .foregroundStyle(.mint)
                 }
+#endif
             }
             .font(AtlasTypography.font(.caption2))
             ViewThatFits(in: .horizontal) {
@@ -141,27 +205,34 @@ struct AirportImagery: View {
 
     private var statusText: String {
         switch (source, status) {
+#if MAINLAND_DISTRIBUTION
+        case (.offline, _): "请重新加载 Apple 卫星影像"
+        case (.apple, .partial), (.apple, .limitedDetail): "正在载入更多 Apple 卫星影像"
+        case (.apple, .failed): "Apple 影像暂不可用"
+#else
         case (.offline, _): "离线公开资料 · 可从影像来源菜单重试"
-        case (.apple, .loading): "正在加载 Apple 卫星影像"
-        case (.apple, .ready): "Apple 地图 · 影像时间和清晰度随地区变化"
         case (.apple, .partial), (.apple, .limitedDetail): "部分 Apple 影像尚未载入，可切换影像来源"
         case (.apple, .failed): "Apple 影像暂不可用，可切换来源或重试"
         case (.sentinel, .loading): "正在加载 EOX 历史卫星影像"
         case (.sentinel, .ready): "2016 年 Sentinel-2 区域合成 · 平面影像，机场设施可能已变化"
         case (.sentinel, .limitedDetail): "2016 年历史影像 · 机场参考点附近细节有限，可查看离线图"
         case (.sentinel, .partial): "2016 年历史合成 · 部分区域瓦片尚未载入"
-        case (.sentinel, .failed): "EOX 影像暂不可用，可选择离线机场图"
+        case (.sentinel, .failed): "EOX 影像暂不可用，可切换至 Apple 卫星影像或离线机场图"
+#endif
+        case (.apple, .loading): "正在加载 Apple 卫星影像"
+        case (.apple, .ready): "Apple 地图 · 影像时间和清晰度随地区变化"
         }
     }
 
     private func buttons(iconOnly: Bool) -> some View {
         HStack(spacing: 7) {
+#if !MAINLAND_DISTRIBUTION
             Menu {
                 Button("自动选择卫星影像", systemImage: "arrow.trianglehead.clockwise") {
-                    switchSource(.apple, automatic: true)
+                    switchSource(Self.preferredSource(for: airport), automatic: true)
                 }
                 Divider()
-                ForEach([AirportImagerySource.apple, .sentinel, .offline]) { item in
+                ForEach(sourceOptions) { item in
                     Button {
                         switchSource(item, automatic: false)
                     } label: {
@@ -173,6 +244,7 @@ struct AirportImagery: View {
             }
             .buttonStyle(.glass)
             .accessibilityIdentifier("airport-imagery-source")
+#endif
 
             if source != .offline {
                 Button {
@@ -192,6 +264,7 @@ struct AirportImagery: View {
                 .buttonStyle(.glass)
                 .accessibilityIdentifier("airport-imagery-recenter")
             }
+#if !MAINLAND_DISTRIBUTION
             if AirportPhotos.available(for: airport) {
                 Button { showPhotos = true } label: {
                     label("实景照片", symbol: "photo.on.rectangle.angled", iconOnly: iconOnly)
@@ -206,6 +279,7 @@ struct AirportImagery: View {
                 .buttonStyle(.glass)
                 .accessibilityIdentifier("airport-imagery-look-around")
             }
+#endif
         }
     }
 
@@ -216,6 +290,7 @@ struct AirportImagery: View {
     }
 
     private func switchSource(_ next: AirportImagerySource, automatic: Bool) {
+        guard sourceOptions.contains(next) else { return }
         self.automatic = automatic
         source = next
         status = .loading
@@ -228,6 +303,7 @@ struct AirportImagery: View {
         cameraChange += 1
     }
 
+#if !MAINLAND_DISTRIBUTION
     private func requestStreetView() async {
         let terminal = plan.features.filter { $0.source.kind == .terminal }.max { $0.bounds.span < $1.bounds.span }
         let coordinate = terminal.map { Self.coordinate(for: $0.bounds.center, airport: airport) } ?? airport.coordinate
@@ -255,6 +331,7 @@ struct AirportImagery: View {
         let wrappedLongitude = (longitude + 540).truncatingRemainder(dividingBy: 360) - 180
         return CLLocationCoordinate2D(latitude: min(90, max(-90, latitude)), longitude: wrappedLongitude)
     }
+#endif
 }
 
 private struct AirportSatelliteMap: UIViewRepresentable {
@@ -278,20 +355,24 @@ private struct AirportSatelliteMap: UIViewRepresentable {
         switch source {
         case .apple:
             map.preferredConfiguration = MKImageryMapConfiguration(elevationStyle: .realistic)
+#if !MAINLAND_DISTRIBUTION
         case .sentinel:
             map.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: .flat)
             let tiles = AirportSentinelTiles(reference: MKMapPoint(airport.coordinate)) { [weak coordinator = context.coordinator] loaded, limitedDetail in
                 Task { @MainActor in coordinator?.archiveTileFinished(loaded: loaded, limitedDetail: limitedDetail) }
             }
             map.addOverlay(tiles, level: .aboveLabels)
+#endif
         case .offline:
             break
         }
+#if !MAINLAND_DISTRIBUTION
         let reference = MKPointAnnotation()
         reference.coordinate = airport.coordinate
         reference.title = airport.displayCode
         reference.subtitle = airport.displayName
         map.addAnnotation(reference)
+#endif
         map.setCamera(nativeCamera, animated: false)
         return map
     }
@@ -310,8 +391,10 @@ private struct AirportSatelliteMap: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         var parent: AirportSatelliteMap
         private var latest: AirportImageryLoad = .loading
+#if !MAINLAND_DISTRIBUTION
         private var receivedArchiveTile = false
         private var archiveDetailIsLimited = false
+#endif
 
         init(parent: AirportSatelliteMap) { self.parent = parent }
 
@@ -332,6 +415,7 @@ private struct AirportSatelliteMap: UIViewRepresentable {
             report(latest == .ready ? .partial : .failed)
         }
 
+#if !MAINLAND_DISTRIBUTION
         func mapView(_ mapView: MKMapView, rendererFor overlay: any MKOverlay) -> MKOverlayRenderer {
             guard let tileOverlay = overlay as? MKTileOverlay else { return MKOverlayRenderer(overlay: overlay) }
             return MKTileOverlayRenderer(tileOverlay: tileOverlay)
@@ -354,6 +438,7 @@ private struct AirportSatelliteMap: UIViewRepresentable {
             if let limitedDetail { archiveDetailIsLimited = limitedDetail }
             report(loaded ? (archiveDetailIsLimited ? .limitedDetail : .ready) : (receivedArchiveTile ? .partial : .failed))
         }
+#endif
 
         private func report(_ update: AirportImageryLoad) {
             guard latest != update else { return }
@@ -365,7 +450,9 @@ private struct AirportSatelliteMap: UIViewRepresentable {
         }
     }
 }
+#endif
 
+#if !MAINLAND_DISTRIBUTION
 private final class AirportSentinelTiles: MKTileOverlay, @unchecked Sendable {
     private static let nativeMaximumZoom = 14
     private let reference: MKMapPoint
@@ -474,3 +561,4 @@ private actor AirportSentinelRequests {
         return try await request.value
     }
 }
+#endif

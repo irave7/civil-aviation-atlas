@@ -1,0 +1,5 @@
+#include "App.xcconfig"
+
+ASSETCATALOG_COMPILER_APPICON_NAME = MainlandAppIcon
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) MAINLAND_DISTRIBUTION
+EXCLUDED_SOURCE_FILE_NAMES = airport-data.json observed-routes.json airport-building-layouts.json airport-site-layouts.json airport-site-terrain.json airport-runway-supplements.json HKG-T1-Exterior.usdz HKGPhotoExterior.jpg HKGPhotoInterior.jpg AirportModels.swift AirportSiteMeshes.swift AirportTerrainModels.swift AirportPlanView.swift AirportPhotos.swift

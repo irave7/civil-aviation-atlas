@@ -204,13 +204,12 @@ final class AirportAtlasUITests: XCTestCase {
         cameraZoom.adjust(toNormalizedSliderPosition: 0)
         XCTAssertLessThan(try zoomPercent(viewport), 25)
         cameraZoom.adjust(toNormalizedSliderPosition: 0.33)
-        tap("model-split-pinch-mode", in: app)
         let separation = app.sliders["model-separation"].normalizedSliderPosition
         let baseline = try zoomPercent(viewport)
         viewport.pinch(withScale: 1.6, velocity: 1.0)
         XCTAssertGreaterThan(try zoomPercent(viewport), baseline)
         XCTAssertEqual(app.sliders["model-separation"].normalizedSliderPosition, separation)
-        attachScreenshot(app, named: "A350-1000 双指拆分")
+        attachScreenshot(app, named: "A350-1000 拆分模式双指缩放")
     }
 
     func testAirportMultiTouchPlanAndSatellite() throws {
@@ -417,7 +416,7 @@ final class AirportAtlasUITests: XCTestCase {
         let separation = app.sliders.matching(identifier: "model-separation").firstMatch
         XCTAssertTrue(separation.waitForExistence(timeout: 12))
         let initial = separation.normalizedSliderPosition
-        viewport.pinch(withScale: 1.55, velocity: 1.0)
+        separation.adjust(toNormalizedSliderPosition: 0.8)
         XCTAssertGreaterThan(separation.normalizedSliderPosition, initial)
         attachScreenshot(app, named: "海口美兰机库 3D 拆分")
 
@@ -445,12 +444,15 @@ final class AirportAtlasUITests: XCTestCase {
     private func verifyViewportPinches(in app: XCUIApplication) throws {
         let viewport = element("model-viewport", in: app)
         XCTAssertTrue(waitForTappable(viewport, timeout: 20))
+        let splitMode = element("model-mode-拆分", in: app)
         let originalZoom = try zoomPercent(viewport)
         viewport.pinch(withScale: 1.65, velocity: 1.1)
         let enlargedZoom = try zoomPercent(viewport)
         XCTAssertGreaterThan(enlargedZoom, originalZoom)
+        XCTAssertFalse(splitMode.isSelected)
         viewport.pinch(withScale: 0.79, velocity: -0.55)
         XCTAssertLessThan(try zoomPercent(viewport), enlargedZoom)
+        XCTAssertFalse(splitMode.isSelected)
 
         if element("model-measure", in: app).exists {
             tap("model-measure", in: app)
@@ -462,16 +464,16 @@ final class AirportAtlasUITests: XCTestCase {
         tap("model-mode-拆分", in: app)
         let slider = app.sliders.matching(identifier: "model-separation").firstMatch
         XCTAssertTrue(slider.waitForExistence(timeout: 12))
-        let fixedZoom = try zoomPercent(viewport)
+        let splitZoom = try zoomPercent(viewport)
         let baselineSeparation = slider.normalizedSliderPosition
         viewport.pinch(withScale: 1.6, velocity: 1.1)
-        let openSeparation = slider.normalizedSliderPosition
-        XCTAssertGreaterThan(openSeparation, baselineSeparation)
-        XCTAssertEqual(try zoomPercent(viewport), fixedZoom)
+        let enlargedSplitZoom = try zoomPercent(viewport)
+        XCTAssertGreaterThan(enlargedSplitZoom, splitZoom)
+        XCTAssertEqual(slider.normalizedSliderPosition, baselineSeparation)
         viewport.pinch(withScale: 0.79, velocity: -0.55)
-        XCTAssertLessThan(slider.normalizedSliderPosition, openSeparation)
-        XCTAssertEqual(try zoomPercent(viewport), fixedZoom)
-        viewport.pinch(withScale: 1.45, velocity: 0.9)
+        XCTAssertLessThan(try zoomPercent(viewport), enlargedSplitZoom)
+        XCTAssertEqual(slider.normalizedSliderPosition, baselineSeparation)
+        XCTAssertTrue(splitMode.isSelected)
     }
 
     private func zoomPercent(_ viewport: XCUIElement) throws -> Int {

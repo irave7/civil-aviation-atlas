@@ -7,11 +7,18 @@ enum AircraftModels {
     static func make(aircraft: AircraftProfile, configuration: AircraftConfiguration,
                      livery: AircraftLivery = AircraftLiveries.reference) -> AtlasModel {
         let builder = AircraftBuilder(length: Float(aircraft.lengthM), span: Float(aircraft.wingspanM),
-                                      configuration: configuration, palette: livery.palette)
+                                      configuration: configuration, palette: livery.palette, exteriorOnly: false)
         if let dimensions = AircraftBuilder.Variant(aircraft.id) {
             return builder.buildVariant(dimensions)
         }
         return builder.build()
+    }
+
+    static func makeFlightExterior(aircraft: AircraftProfile, configuration: AircraftConfiguration,
+                                   livery: AircraftLivery) -> (root: Entity, landingGear: Entity) {
+        let builder = AircraftBuilder(length: Float(aircraft.lengthM), span: Float(aircraft.wingspanM),
+                                      configuration: configuration, palette: livery.palette, exteriorOnly: true)
+        return builder.buildFlightExterior(variant: AircraftBuilder.Variant(aircraft.id))
     }
 }
 
@@ -105,6 +112,7 @@ private struct AircraftBuilder {
     let span: Float
     let configuration: AircraftConfiguration
     let palette: AircraftLivery.Palette
+    let exteriorOnly: Bool
 
     private static func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
         UIColor(red: r, green: g, blue: b, alpha: 1)
@@ -156,11 +164,33 @@ private struct AircraftBuilder {
 
     func build() -> AtlasModel {
         let root = Entity()
-        let parts = [body(), wing(side: -1), wing(side: 1), engine(side: -1), engine(side: 1), tail(), landingGear()]
+        let parts = standardParts() + [landingGear()]
         for part in parts { root.addChild(part.entity) }
         return AtlasModel(root: root, parts: parts, overviewTarget: p(length / 2, 1), overviewDistance: 114,
                           metersPerUnit: 1,
                           sourceNote: "按空客公开尺寸和航司公开客舱资料制作的比例模型。客舱、涂装和机械细节为简化示意，测距基于模型几何。", stageGroundY: -5.56)
+    }
+
+    func buildFlightExterior(variant: Variant?) -> (root: Entity, landingGear: Entity) {
+        let root = Entity()
+        let parts: [AtlasPart]
+        let gear: AtlasPart
+        if let variant {
+            parts = variantParts(variant)
+            gear = variantLandingGear(variant)
+        } else {
+            parts = standardParts()
+            gear = landingGear()
+        }
+        for part in parts + [gear] {
+            part.entity.name = part.id
+            root.addChild(part.entity)
+        }
+        return (root, gear.entity)
+    }
+
+    private func standardParts() -> [AtlasPart] {
+        [body(), wing(side: -1), wing(side: 1), engine(side: -1), engine(side: 1), tail()]
     }
 
     private func p(_ x: Float, _ y: Float = 0, _ z: Float = 0) -> Point {
@@ -170,7 +200,7 @@ private struct AircraftBuilder {
     private func part(_ id: String, _ label: String, _ symbol: String, _ detail: String, entity: Entity, focus: Point,
                       distance: Float, bounds: Point? = nil, shell: Entity? = nil, interior: Entity? = nil,
                       section: Entity? = nil, explode: Point = .zero, children: [AtlasPart] = [], size: String? = nil, interiorOnly: Bool = false) -> AtlasPart {
-        if let bounds { AtlasGeometry.partCollider(entity, size: bounds, center: focus) }
+        if !exteriorOnly, let bounds { AtlasGeometry.partCollider(entity, size: bounds, center: focus) }
         return AtlasPart(id: id, label: label, symbol: symbol, detail: detail, entity: entity, focus: focus,
                          focusDistance: distance, shell: shell, interior: interior, section: section, explodeOffset: explode,
                          children: children, sizeText: size, interiorOnly: interiorOnly)
@@ -319,7 +349,6 @@ private struct AircraftBuilder {
     }
 
     private func body() -> AtlasPart {
-        let entity = Entity()
         let exterior = Entity()
         exterior.addChild(tube(fuselageStations, finish: fuselageFinish))
         installTubeColliders(on: exterior, stations: fuselageStations)
@@ -327,7 +356,11 @@ private struct AircraftBuilder {
         addCockpitGlass(to: exterior)
         addCabinWindows(to: exterior)
         addDoors(to: exterior)
+        if exteriorOnly {
+            return part("fuselage", "机身", "airplane", "机身外壳", entity: exterior, focus: p(32, 0.1), distance: 79)
+        }
 
+        let entity = Entity()
         let inside = Entity()
         let cut = Entity()
         let rimAngles: [Float] = [2.74, 6.10]
@@ -438,6 +471,7 @@ private struct AircraftBuilder {
     }
 
     private func installTubeColliders(on entity: Entity, stations: [Station], sideOffset: Float = 0) {
+        guard !exteriorOnly else { return }
         let groups = stride(from: 0, to: stations.count - 1, by: 5).map { start in
             stations[start...min(start + 5, stations.count - 1)]
         }
@@ -665,6 +699,16 @@ private struct AircraftBuilder {
         fan.addChild(bladeDisk(x: x + 0.71, y: y, z: z, root: 0.31, radius: 1.49, count: 22, finish: metal))
         fan.addChild(tube([Station(x + 0.16, y, 0.035, 0.035), Station(x + 0.42, y, 0.18, 0.18), Station(x + 0.88, y, 0.34, 0.34),
                            Station(x + 1.0, y, 0.35, 0.35)], z: z, slices: 36, finish: carbon))
+        let nozzle = tube([Station(x + 6.33, y + 0.22, 1.21, 1.21), Station(x + 6.55, y + 0.22, 0.99, 0.99),
+                           Station(x + 7.08, y + 0.14, 0.53, 0.53), Station(x + 7.65, y + 0.12, 0.15, 0.15)], z: z, finish: carbon)
+        shell.addChild(nozzle)
+        if exteriorOnly {
+            entity.addChild(shell)
+            entity.addChild(fan)
+            return part(identifier, side < 0 ? "右发动机" : "左发动机", "fanblades.fill", "Rolls-Royce Trent XWB",
+                        entity: entity, focus: p(x + 3, y, z), distance: 16)
+        }
+
         let fanPart = part(identifier + "-fan", "进气风扇", "fanblades.fill", "风扇将空气导入发动机，大部分气流沿外涵道流过。独立叶片的造型为教学示意。",
                            entity: fan, focus: p(x + 0.72, y, z), distance: 6.7, bounds: [0.55, 3.0, 3.0], explode: [-5.0, 1.3, 0])
 
@@ -699,9 +743,6 @@ private struct AircraftBuilder {
         }
         let turbinePart = part(identifier + "-turbine", "涡轮与尾喷管", "circle.hexagongrid.fill", "涡轮从热气流提取能量驱动风扇和压气机。尾部喷管引导流体排出。",
                                entity: turbine, focus: p(x + 5.75, y, z), distance: 6.7, bounds: [3.4, 1.6, 1.6], explode: [4.7, 2.4, 0], interiorOnly: true)
-        let nozzle = tube([Station(x + 6.33, y + 0.22, 1.21, 1.21), Station(x + 6.55, y + 0.22, 0.99, 0.99),
-                           Station(x + 7.08, y + 0.14, 0.53, 0.53), Station(x + 7.65, y + 0.12, 0.15, 0.15)], z: z, finish: carbon)
-        shell.addChild(nozzle)
         for child in [compressorPart, combustionPart, turbinePart] { inside.addChild(child.entity) }
         let section = Entity()
         section.addChild(tube(profiles, z: z, start: 2.93, end: 6.0, finish: nacelleFinish))
@@ -950,6 +991,14 @@ private extension AircraftBuilder {
 
     func buildVariant(_ spec: Variant) -> AtlasModel {
         let root = Entity()
+        let parts = variantParts(spec) + [variantLandingGear(spec)]
+        for part in parts { root.addChild(part.entity) }
+        return AtlasModel(root: root, parts: parts, overviewTarget: p(length / 2, spec.hasUpperDeck ? 1.4 : 0.75),
+                          overviewDistance: max(length, span) * 1.72, metersPerUnit: 1,
+                          sourceNote: "按制造商公布机长与翼展制作的比例示意。客舱、起落架、发动机内部与航司配色用于说明整体布局，测距基于模型几何。", stageGroundY: spec.groundY - 0.025)
+    }
+
+    private func variantParts(_ spec: Variant) -> [AtlasPart] {
         let wingStations = variantWingStations(spec)
         var parts = [variantBody(spec), variantWing(spec, wingStations, side: -1), variantWing(spec, wingStations, side: 1)]
         for side: Float in [-1, 1] {
@@ -957,11 +1006,7 @@ private extension AircraftBuilder {
             if spec.fourEngines { parts.append(variantEngine(spec, wingStations, side: side, outboard: true)) }
         }
         parts.append(variantTail(spec))
-        parts.append(variantLandingGear(spec))
-        for part in parts { root.addChild(part.entity) }
-        return AtlasModel(root: root, parts: parts, overviewTarget: p(length / 2, spec.hasUpperDeck ? 1.4 : 0.75),
-                          overviewDistance: max(length, span) * 1.72, metersPerUnit: 1,
-                          sourceNote: "按制造商公布机长与翼展制作的比例示意。客舱、起落架、发动机内部与航司配色用于说明整体布局，测距基于模型几何。", stageGroundY: spec.groundY - 0.025)
+        return parts
     }
 
     private func variantFuselage(_ spec: Variant) -> [Station] {
@@ -1014,12 +1059,18 @@ private extension AircraftBuilder {
     }
 
     private func variantBody(_ spec: Variant) -> AtlasPart {
-        let entity = Entity(), shell = Entity(), interior = Entity(), cut = Entity()
+        let shell = Entity()
         let stations = variantFuselage(spec)
         shell.addChild(tube(stations, finish: fuselageFinish))
         installTubeColliders(on: shell, stations: stations)
         addFuselageLivery(to: shell, stations: stations)
         addVariantWindows(spec, profiles: stations, to: shell)
+        if exteriorOnly {
+            return part("fuselage", "机身", "airplane", "机身外壳", entity: shell,
+                        focus: p(length * 0.48, 0.2), distance: length * 1.24)
+        }
+
+        let entity = Entity(), interior = Entity(), cut = Entity()
         let cutStart: Float = 2.81
         let cutEnd: Float = 6.03
         cut.addChild(tube(stations, start: cutStart, end: cutEnd, finish: fuselageFinish))
@@ -1343,7 +1394,7 @@ private extension AircraftBuilder {
         let leading = a.front + fraction * (b.front - a.front)
         let x = leading - size * 0.46
         let y = max(spec.groundY + radius * (spec.flatNacelle ? 0.87 : 1) + 0.17, wingY - radius - 0.38)
-        let entity = Entity(), shell = Entity(), interior = Entity(), section = Entity()
+        let entity = Entity(), shell = Entity()
         func ring(_ run: Float, _ factor: Float, rise: Float = 0, flat: Bool = false) -> Station {
             let r = radius * factor
             return Station(x + size * run, y + rise, r * (flat && spec.flatNacelle ? 0.86 : 1), r)
@@ -1382,6 +1433,14 @@ private extension AircraftBuilder {
         let fan = Entity()
         fan.addChild(bladeDisk(x: x + size * 0.126, y: y, z: z, root: radius * 0.16, radius: radius * (spec.flatNacelle ? 0.71 : 0.80), count: 22, finish: metal))
         fan.addChild(tube([ring(0.052, 0.03), ring(0.105, 0.15), ring(0.23, 0.19)], z: z, slices: 30, finish: carbon))
+        if exteriorOnly {
+            entity.addChild(shell)
+            entity.addChild(fan)
+            return part(id, label, "fanblades.fill", spec.engineName,
+                        entity: entity, focus: p(x + size * 0.49, y, z), distance: max(9, size * 2.16))
+        }
+
+        let interior = Entity(), section = Entity()
         let fanPart = part(id + "-fan", "进气风扇", "fanblades.fill", "风扇叶片将气流引向发动机的内涵道和外涵道。",
                            entity: fan, focus: p(x + size * 0.17, y, z), distance: radius * 4.3,
                            bounds: [size * 0.11, radius * 1.54, radius * 1.54], explode: [-size * 0.75, 1.1, 0])

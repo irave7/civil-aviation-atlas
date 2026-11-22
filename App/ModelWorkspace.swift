@@ -25,6 +25,7 @@ private enum ModelMode: String, CaseIterable, Identifiable {
 @MainActor
 struct ModelWorkspace: View {
     private static let stageControlPadding: CGFloat = 16
+    private static let defaultSeparation = 0.45
 
     let model: AtlasModel
     let title: String
@@ -39,6 +40,7 @@ struct ModelWorkspace: View {
     @StateObject private var scene: ModelSceneController
     @State private var activePart: String?
     @State private var mode: ModelMode = .exterior
+    @State private var modeBeforeSplit: ModelMode = .exterior
     @State private var isolateSelection = true
     @State private var showParts: Bool
     @State private var partsSheet = false
@@ -46,8 +48,7 @@ struct ModelWorkspace: View {
     @State private var bottomControlsHeight: CGFloat = 0
     @State private var measuring = false
     @State private var measurePoints: [SIMD3<Float>] = []
-    @State private var separation = 0.45
-    @State private var pinchZoomsInSplit = false
+    @State private var separation = ModelWorkspace.defaultSeparation
     @State private var transparency = 0.28
     @State private var target: SIMD3<Float>
     @State private var distance: Float
@@ -80,9 +81,8 @@ struct ModelWorkspace: View {
 
     private var part: AtlasPart? { activePart.flatMap(scene.part(withID:)) }
     private var hasSplitZoom: Bool { expandsSplitZoom && mode == .exploded }
-    private var pinchMovesParts: Bool { mode == .exploded && !(hasSplitZoom && pinchZoomsInSplit) }
     private var zoomPercent: Int { Int(((part?.focusDistance ?? model.overviewDistance) * 100 / distance).rounded()) }
-    private var canDirectlySplit: Bool { !measuring && mode != .exploded && availableModes.contains(.exploded) }
+    private var canAdjustSeparation: Bool { !measuring && availableModes.contains(.exploded) }
 
     private var availableModes: [ModelMode] {
         let scope = part?.hierarchy ?? scene.orderedParts
@@ -127,6 +127,19 @@ struct ModelWorkspace: View {
                         }
                 }
                 .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showGestures) {
+                NavigationStack {
+                    AtlasTouchGuide()
+                        .navigationTitle("触控教程")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("完成") { showGestures = false }
+                                    .accessibilityIdentifier("model-gesture-help-done")
+                            }
+                        }
+                }
             }
         }
     }
@@ -191,12 +204,13 @@ struct ModelWorkspace: View {
         .overlay {
             ModelTouchSurface(
                 zoomLabel: "\(zoomPercent)%",
-                gestureHint: pinchMovesParts ? "单指旋转，双指平移，捏合调整部件间距" : "单指旋转，双指平移或捏合缩放",
+                gestureHint: canAdjustSeparation
+                    ? "单指旋转，双指平移或缩放，三指拆分或合并"
+                    : "单指旋转，双指平移或缩放",
                 bottomHUDClearance: bottomControlsHeight + controlPadding + 12,
                 upperControls: CGSize(width: isPhone ? 120 : 172, height: controlPadding + 50),
                 canToggleTransparency: !measuring && availableModes.contains(.xray),
-                canToggleSection: !measuring && availableModes.contains(.section),
-                canDirectlySplit: canDirectlySplit
+                canToggleSection: !measuring && availableModes.contains(.section)
             ) { point, size in
                 tapModel(at: point, in: size)
             } orbit: { delta in
@@ -210,8 +224,7 @@ struct ModelWorkspace: View {
                 toggleMode(.xray)
             } toggleSection: {
                 toggleMode(.section)
-            } openSplit: { scale in
-                if canDirectlySplit { changeMode(.exploded) }
+            } adjustSeparation: { scale in
                 adjustSeparation(by: scale)
             }
         }
@@ -229,12 +242,7 @@ struct ModelWorkspace: View {
 
     private func transformModel(translation: CGVector, scale: CGFloat, size: CGSize, distanceFit: Float) {
         if scale != 1 {
-            if pinchMovesParts {
-                // Logarithmic increments make opening and closing equally responsive at any finger span.
-                adjustSeparation(by: scale)
-            } else {
-                distance = clampedDistance(distance / Float(scale))
-            }
+            distance = clampedDistance(distance / Float(scale))
         }
         guard translation != .zero else { return }
         let unitsPerPoint = ModelSceneController.frustumHeight(at: distance * distanceFit) / Float(max(1, size.height))
@@ -244,7 +252,18 @@ struct ModelWorkspace: View {
     }
 
     private func adjustSeparation(by scale: CGFloat) {
-        separation = min(1, max(0, separation + log(Double(scale))))
+        guard canAdjustSeparation else { return }
+        let change = log(Double(scale)) * 1.25
+        if mode != .exploded {
+            guard change > 0 else { return }
+            separation = 0
+            changeMode(.exploded)
+        }
+        separation = min(1, max(0, separation + change))
+        if separation == 0, change < 0 {
+            changeMode(availableModes.contains(modeBeforeSplit) ? modeBeforeSplit : .exterior)
+            separation = Self.defaultSeparation
+        }
     }
 
     private func header(isWide: Bool, shortStage: Bool) -> some View {
@@ -282,29 +301,8 @@ struct ModelWorkspace: View {
             }
             .buttonStyle(.glass)
             .foregroundStyle(palette.stageInk)
-            .accessibilityLabel("触控操作")
+            .accessibilityLabel("触控教程")
             .accessibilityIdentifier("model-gesture-help")
-            .popover(isPresented: $showGestures, arrowEdge: .top) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("触控操作").font(AtlasTypography.font(.title3, weight: .semibold))
-                    Text("单指拖动旋转｜双指拖动平移")
-                    Text("双指张开或捏合缩放模型")
-                    if availableModes.contains(.xray) { Text("单指双击切换透视") }
-                    if availableModes.contains(.section) { Text("双指双击切换剖视") }
-                    if availableModes.contains(.exploded) {
-                        Text("在画面上竖直张开双指，可直接进入拆分。")
-                        if expandsSplitZoom {
-                            Text("在「拆分」模式下，默认捏合调整部件间距。点「捏合」可切换手势，也可以直接拖动镜头缩放滑杆。")
-                        } else {
-                            Text("在「拆分」模式下，双指张开分离部件，捏合收拢。")
-                        }
-                    }
-                }
-                .font(AtlasTypography.font(.body))
-                .padding(20)
-                .frame(maxWidth: 320, alignment: .leading)
-                .presentationCompactAdaptation(.popover)
-            }
             Button {
                 if isWide { showParts.toggle() } else { partsSheet.toggle() }
             } label: {
@@ -332,15 +330,12 @@ struct ModelWorkspace: View {
                 stageSettings(adjustsInInspector: adjustsInInspector)
                 HStack(spacing: 6) {
                     modeButtons(labels: false)
-                    if hasSplitZoom && !adjustsInInspector { splitPinchControl() }
                     Spacer(minLength: 0)
                     actions
                 }
             } else {
                 HStack(spacing: 6) {
-                    if hasSplitZoom && !adjustsInInspector {
-                        splitPinchControl()
-                    } else if model.metersPerUnit > 0 && !measuring && mode != .exploded {
+                    if model.metersPerUnit > 0 && !measuring && mode != .exploded {
                         ruler(viewportHeight: viewportHeight, distanceFit: distanceFit)
                     }
                     Spacer(minLength: 2)
@@ -432,24 +427,6 @@ struct ModelWorkspace: View {
         } else if !adjustsInInspector && mode == .xray {
             transparencyControl()
         }
-    }
-
-    private func splitPinchControl(inInspector: Bool = false) -> some View {
-        Button {
-            pinchZoomsInSplit.toggle()
-        } label: {
-            Label(pinchZoomsInSplit ? "捏合缩放" : "捏合拆分",
-                  systemImage: pinchZoomsInSplit ? "arrow.up.left.and.arrow.down.right" : ModelMode.exploded.symbol)
-                .font(AtlasTypography.font(.footnote, weight: .semibold))
-                .frame(maxWidth: inInspector ? .infinity : nil)
-                .frame(minHeight: inInspector ? 30 : nil)
-        }
-        .buttonStyle(.glass)
-        .tint(inInspector ? palette.accent : palette.stageAccent)
-        .accessibilityLabel("双指捏合")
-        .accessibilityValue(pinchZoomsInSplit ? "缩放" : "拆分")
-        .accessibilityHint("轻点切换缩放与拆分")
-        .accessibilityIdentifier("model-split-pinch-mode")
     }
 
     private func separationControl(inInspector: Bool = false) -> some View {
@@ -681,7 +658,6 @@ struct ModelWorkspace: View {
                 separationControl(inInspector: true)
                 if hasSplitZoom {
                     splitZoomControl(inInspector: true)
-                    splitPinchControl(inInspector: true)
                 }
             } else if mode == .xray {
                 transparencyControl(inInspector: true)
@@ -758,7 +734,10 @@ struct ModelWorkspace: View {
 
     private func changeMode(_ newMode: ModelMode) {
         guard mode != newMode else { return }
-        if newMode == .exploded { measuring = false }
+        if newMode == .exploded {
+            modeBeforeSplit = mode
+            measuring = false
+        }
         mode = newMode
         if expandsSplitZoom { distance = clampedDistance(distance, for: newMode) }
         measurePoints.removeAll()
@@ -773,8 +752,7 @@ struct ModelWorkspace: View {
         mode = .exterior
         measuring = false
         isolateSelection = true
-        separation = 0.45
-        pinchZoomsInSplit = false
+        separation = Self.defaultSeparation
         azimuth = -0.53
         elevation = 0.56
         select(nil)
@@ -798,14 +776,13 @@ private struct ModelTouchSurface: UIViewRepresentable {
     let upperControls: CGSize
     let canToggleTransparency: Bool
     let canToggleSection: Bool
-    let canDirectlySplit: Bool
     let tap: (CGPoint, CGSize) -> Void
     let orbit: (CGVector) -> Void
     let transform: (CGVector, CGFloat, CGSize) -> Void
     let adjustZoom: (Float) -> Void
     let toggleTransparency: () -> Void
     let toggleSection: () -> Void
-    let openSplit: (CGFloat) -> Void
+    let adjustSeparation: (CGFloat) -> Void
 
     func makeUIView(context: Context) -> TouchView {
         let view = TouchView()
@@ -826,8 +803,7 @@ private struct ModelTouchSurface: UIViewRepresentable {
         view.onAdjustZoom = adjustZoom
         view.onToggleTransparency = toggleTransparency
         view.onToggleSection = toggleSection
-        view.onOpenSplit = openSplit
-        view.canDirectlySplit = canDirectlySplit
+        view.onAdjustSeparation = adjustSeparation
         view.bottomHUDClearance = bottomHUDClearance
         view.upperControls = upperControls
         view.accessibilityValue = zoomLabel
@@ -843,8 +819,7 @@ private struct ModelTouchSurface: UIViewRepresentable {
         var onAdjustZoom: ((Float) -> Void)?
         var onToggleTransparency: (() -> Void)?
         var onToggleSection: (() -> Void)?
-        var onOpenSplit: ((CGFloat) -> Void)?
-        var canDirectlySplit = false
+        var onAdjustSeparation: ((CGFloat) -> Void)?
         var bottomHUDClearance: CGFloat = 0
         var upperControls = CGSize.zero
 
@@ -901,68 +876,25 @@ private struct ModelTouchSurface: UIViewRepresentable {
         override func accessibilityIncrement() { onAdjustZoom?(1.2) }
         override func accessibilityDecrement() { onAdjustZoom?(1 / 1.2) }
 
-        private struct Pair {
-            let center: CGPoint
-            let span: CGFloat
-            let vertical: Bool
-        }
-
-        private enum PairIntent { case checkingSpread, transform, split }
-
         private var fingers: Set<UITouch> = []
-        private var tapStart: CGPoint?
-        private var orbitPoint: CGPoint?
-        private var panCenter: CGPoint?
-        private var pinchSpan: CGFloat?
-        private var pairIntent = PairIntent.transform
-        private var isPanning = false
-        private var isPinching = false
-        private let dragThreshold: CGFloat = 6
+        private var movement = ModelTouchMovement()
+
+        private var contactPoints: [CGPoint] { fingers.map { $0.location(in: self) } }
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             fingers.formUnion(touches)
-            if fingers.count == 1 {
-                tapStart = fingers.first?.location(in: self)
-            } else {
-                // A touch sequence that becomes multi-touch can never trigger a part tap.
-                tapStart = nil
-                orbitPoint = nil
-                resetPair()
-            }
+            movement.contactsChanged(contactPoints)
         }
 
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-            if let pair, let panCenter, let pinchSpan {
-                let translation = delta(from: panCenter, to: pair.center)
-                let centerMotion = hypot(translation.dx, translation.dy)
-                let separationMotion = pair.span - pinchSpan
-                if pairIntent == .checkingSpread {
-                    // A nearly vertical spread with a steady midpoint differs from zoom and panning.
-                    if pair.vertical, separationMotion >= 20, centerMotion <= max(10, separationMotion * 0.45) {
-                        pairIntent = .split
-                    } else if !pair.vertical || separationMotion <= -dragThreshold || centerMotion >= 14 {
-                        pairIntent = .transform
-                    } else {
-                        return
-                    }
-                }
-                if pairIntent == .split {
-                    self.pinchSpan = pair.span
-                    onOpenSplit?(pair.span / pinchSpan)
-                    return
-                }
-                isPanning = isPanning || centerMotion >= dragThreshold
-                isPinching = isPinching || abs(pair.span - pinchSpan) >= dragThreshold
-                if isPanning { self.panCenter = pair.center }
-                if isPinching { self.pinchSpan = pair.span }
-                onTransform?(isPanning ? translation : .zero, isPinching ? pair.span / pinchSpan : 1, bounds.size)
-            } else if fingers.count == 1, let point = fingers.first?.location(in: self),
-                      let origin = orbitPoint ?? tapStart {
-                let translation = delta(from: origin, to: point)
-                guard orbitPoint != nil || hypot(translation.dx, translation.dy) >= dragThreshold else { return }
-                tapStart = nil
-                orbitPoint = point
+            guard let change = movement.move(contactPoints) else { return }
+            switch change {
+            case .orbit(let translation):
                 onOrbit?(translation)
+            case .transform(let translation, let scale):
+                onTransform?(translation, scale, bounds.size)
+            case .separation(let scale):
+                onAdjustSeparation?(scale)
             }
         }
 
@@ -974,37 +906,9 @@ private struct ModelTouchSurface: UIViewRepresentable {
             finish(touches)
         }
 
-        private var pair: Pair? {
-            guard fingers.count == 2 else { return nil }
-            let points = fingers.map { $0.location(in: self) }
-            let first = points[0]
-            let second = points[1]
-            let separation = delta(from: first, to: second)
-            return Pair(
-                center: CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2),
-                span: max(12, hypot(separation.dx, separation.dy)),
-                vertical: abs(separation.dy) >= abs(separation.dx) * 2.2
-            )
-        }
-
-        private func resetPair() {
-            let pair = pair
-            panCenter = pair?.center
-            pinchSpan = pair?.span
-            pairIntent = canDirectlySplit && pair?.vertical == true ? .checkingSpread : .transform
-            isPanning = false
-            isPinching = false
-        }
-
         private func finish(_ touches: Set<UITouch>) {
             fingers.subtract(touches)
-            tapStart = nil
-            orbitPoint = nil
-            resetPair()
-        }
-
-        private func delta(from origin: CGPoint, to point: CGPoint) -> CGVector {
-            CGVector(dx: point.x - origin.x, dy: point.y - origin.y)
+            movement.contactsChanged(contactPoints)
         }
     }
 }

@@ -20,7 +20,7 @@ struct AtlasPrivacyPane: View {
                 }
                 if DistributionPolicy.liveFlightsAvailable {
                     Text("查询航班动态或历史记录时，机场或数据提供方会收到查询所需的机场、日期或方向，以及访问所需的网络信息。")
-                    Text("在航线探索中主动读取观测时，NOAA 会收到两端机场代码，adsb.lol 可能收到资料中的航班呼号。服务提供方也会收到访问所需的网络信息。")
+                    Text("在航线探索或航线模拟中主动读取观测时，NOAA 会收到两端机场代码，adsb.lol 可能收到资料中的航班呼号。服务提供方也会收到访问所需的网络信息。")
                 }
                 Text("点按外部资料链接时会打开相应网站，网站按其自身规则处理访问。")
             }

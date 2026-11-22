@@ -13,6 +13,7 @@ xcuserdata/
 
 /Build/*
 !/Build/App.xcconfig
+!/Build/Checks/
 !/Build/MainlandReview.xcconfig
 !/Build/prepare-mainland-catalog.py
 !/Build/prepare-narration.py

@@ -13,7 +13,7 @@ private enum ExplorationScope: String, CaseIterable, Identifiable {
     }
 }
 
-private struct ExplorationLeg: Identifiable {
+struct ExplorationLeg: Identifiable {
     let start: Airport
     let end: Airport
     let evidence: FlightRoute
@@ -37,6 +37,7 @@ private struct ExplorationLeg: Identifiable {
 @MainActor
 struct FlightExploration: View {
     let library: AtlasLibrary
+    var simulatesFlight = false
     let openAirport: (Airport) -> Void
 
     @Environment(\.colorScheme) private var scheme
@@ -54,11 +55,11 @@ struct FlightExploration: View {
         ScrollView {
             VStack(alignment: .leading, spacing: palette.contentGap + 8) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("沿航线探索")
+                    Text(simulatesFlight ? "选择一段航程" : "沿航线探索")
                         .font(AtlasTypography.font(.largeTitle, weight: palette.isDark ? .semibold : .bold))
                         .foregroundStyle(palette.ink)
                         .accessibilityAddTraits(.isHeader)
-                    Text("选择出发机场和目的地，开启一段模拟航程。")
+                    Text(simulatesFlight ? "从航前准备开始，亲自完成起飞、巡航、进近和滑跑。" : "选择出发机场和目的地，开启一段模拟航程。")
                         .font(AtlasTypography.font(.subheadline))
                         .foregroundStyle(palette.muted)
                 }
@@ -130,9 +131,14 @@ struct FlightExploration: View {
             }
         }
         .fullScreenCover(item: $activeLeg) { leg in
-            FlightExplorationPlayback(leg: leg) { airport in
+            let showAirport: (Airport) -> Void = { airport in
                 activeLeg = nil
                 openAirport(airport)
+            }
+            if simulatesFlight {
+                FlightSimulatorSession(leg: leg, openAirport: showAirport)
+            } else {
+                FlightExplorationPlayback(leg: leg, openAirport: showAirport)
             }
         }
     }
@@ -516,7 +522,7 @@ private struct FlightExplorationPlayback: View {
         .sheet(isPresented: $showsNarrationStyles, content: narrationStyles)
         .sheet(isPresented: $showsReality) {
             NavigationStack {
-                FlightExplorationReality(origin: leg.start, destination: leg.end, route: leg.evidence) { knots in
+                FlightExplorationReality(origin: leg.start, destination: leg.end, route: leg.evidence) { knots, _, _ in
                     observedKnots = max(0, knots)
                     wind = .observed
                     showsReality = false

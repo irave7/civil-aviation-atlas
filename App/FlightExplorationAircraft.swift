@@ -8,6 +8,7 @@ struct FlightExplorationAircraft: View {
     let livery: AircraftLivery
     let progress: Double
     let pitch: Double
+    var bank: Double = 0
     let gearDown: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -21,6 +22,7 @@ struct FlightExplorationAircraft: View {
             let aspect = Float(geometry.size.width / max(1, geometry.size.height))
             let drift = reduceMotion ? 0.5 : fraction
             let displayedPitch = reduceMotion ? 0 : pitch
+            let displayedBank = reduceMotion ? 0 : bank
             ZStack {
                 ExplorationAircraftBackdrop(progress: drift, altitude: sin(.pi * drift))
                 if let scene, scene.modelKey == modelKey {
@@ -28,9 +30,9 @@ struct FlightExplorationAircraft: View {
                         content.camera = .virtual
                         content.renderingEffects.motionBlur = .disabled
                         content.add(scene.world)
-                        scene.pose(progress: drift, pitch: displayedPitch, gearDown: gearDown, aspect: aspect)
+                        scene.pose(progress: drift, pitch: displayedPitch, bank: displayedBank, gearDown: gearDown, aspect: aspect)
                     } update: { _ in
-                        scene.pose(progress: drift, pitch: displayedPitch, gearDown: gearDown, aspect: aspect)
+                        scene.pose(progress: drift, pitch: displayedPitch, bank: displayedBank, gearDown: gearDown, aspect: aspect)
                     }
                     .id(modelKey)
                 } else {
@@ -96,12 +98,14 @@ private final class ExplorationAircraftScene {
         addLight(from: [-2, 5, 5], intensity: 1_650, color: UIColor(red: 0.69, green: 0.96, blue: 1, alpha: 1))
     }
 
-    func pose(progress: Double, pitch: Double, gearDown: Bool, aspect: Float) {
+    func pose(progress: Double, pitch: Double, bank: Double, gearDown: Bool, aspect: Float) {
         let travel = Float(progress)
         let extent = max(length, span)
         aircraft.position = [length * (0.095 - travel * 0.19), extent * sin(.pi * travel) * 0.085, 0]
         let radians = Float(min(25, max(-25, pitch))) * Float.pi / 180
+        let bankRadians = Float(bank) * Float.pi / 180
         aircraft.orientation = simd_quatf(angle: -radians, axis: [0, 0, 1])
+            * simd_quatf(angle: bankRadians, axis: [1, 0, 0])
         landingGear?.isEnabled = gearDown
 
         guard lastAspect != aspect else { return }

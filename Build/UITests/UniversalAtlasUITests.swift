@@ -43,10 +43,12 @@ final class UniversalAtlasUITests: XCTestCase {
         let app = launchAtlas()
         openDirectory(in: app)
         tap("entry-privacy", in: app)
-        XCTAssertTrue(control("atlas-privacy", in: app).waitForExistence(timeout: 15))
+        let privacy = control("atlas-privacy", in: app)
+        XCTAssertTrue(privacy.waitForExistence(timeout: 15))
         attachScreenshot(app.screenshot(), named: "隐私与数据")
-        if !control("privacy-clear-favorites", in: app).exists { app.swipeUp() }
-        XCTAssertTrue(control("privacy-clear-favorites", in: app).exists)
+        let clearFavorites = control("privacy-clear-favorites", in: app)
+        for _ in 0..<4 where !clearFavorites.exists { privacy.swipeUp() }
+        XCTAssertTrue(clearFavorites.exists)
 
         openDirectory(in: app)
         tap("entry-aircraft", in: app)

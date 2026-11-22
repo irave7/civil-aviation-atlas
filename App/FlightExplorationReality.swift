@@ -5,7 +5,7 @@ struct FlightExplorationReality: View {
     let origin: Airport
     let destination: Airport
     let route: FlightRoute
-    var onWind: (Double) -> Void = { _ in }
+    var onWind: (Double, Double?, String) -> Void = { _, _, _ in }
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
@@ -97,7 +97,7 @@ struct FlightExplorationReality: View {
                     if let report = latestWind, let speed = report.windSpeed {
                         Button("用观测风速体验", systemImage: "wind") {
                             selectedWind = report.station
-                            onWind(speed)
+                            onWind(speed, report.directionDegrees, report.station)
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("exploration-reality-wind")
@@ -211,6 +211,11 @@ private struct AirportWeatherObservation: Decodable, Sendable {
     }
 
     var date: Date { Date(timeIntervalSince1970: TimeInterval(observationTime)) }
+
+    var directionDegrees: Double? {
+        guard case .number(let degrees) = windDirection else { return nil }
+        return Double(degrees)
+    }
 
     var windDescription: String {
         guard let windSpeed else { return "地面风速未报告" }

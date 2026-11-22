@@ -1,0 +1,251 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+		6AF006C10000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2720;
+				LastUpgradeCheck = 2720;
+				TargetAttributes = {
+					6AF006C10000000000000011 = {
+						TestTargetID = 6AF006C10000000000000006;
+					};
+				};
+			};
+			buildConfigurationList = 6AF006C10000000000000009 /* Project configurations */;
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = ("zh-Hans", en, Base);
+			mainGroup = 6AF006C10000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6AF006C10000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+		targets = (
+			6AF006C10000000000000006 /* AirportAtlas */,
+			6AF006C10000000000000011 /* AirportAtlasUITests */,
+		);
+		};
+		6AF006C10000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				6AF006C10000000000000004 /* App */,
+				6AF006C10000000000000012 /* UITests */,
+				6AF006C10000000000000010 /* App.xcconfig */,
+				6AF006C10000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6AF006C10000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6AF006C10000000000000005 /* AirportAtlas.app */,
+				6AF006C10000000000000013 /* AirportAtlasUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6AF006C10000000000000004 /* App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = App;
+			sourceTree = "<group>";
+		};
+		6AF006C10000000000000005 /* AirportAtlas.app */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.application;
+			includeInIndex = 0;
+			path = AirportAtlas.app;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		6AF006C10000000000000006 /* AirportAtlas */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6AF006C1000000000000000A /* Target configurations */;
+			buildPhases = (
+				6AF006C10000000000000007 /* Sources */,
+				6AF006C1000000000000000F /* Frameworks */,
+				6AF006C10000000000000008 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (6AF006C10000000000000004 /* App */);
+			name = AirportAtlas;
+			productName = AirportAtlas;
+			productReference = 6AF006C10000000000000005 /* AirportAtlas.app */;
+			productType = "com.apple.product-type.application";
+		};
+		6AF006C10000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6AF006C10000000000000008 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6AF006C10000000000000009 /* Project configurations */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6AF006C1000000000000000B /* Debug */,
+				6AF006C1000000000000000C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6AF006C1000000000000000A /* Target configurations */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6AF006C1000000000000000D /* Debug */,
+				6AF006C1000000000000000E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6AF006C1000000000000000B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		6AF006C1000000000000000C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6AF006C1000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6AF006C10000000000000010 /* App.xcconfig */;
+			buildSettings = {};
+			name = Debug;
+		};
+		6AF006C1000000000000000E /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6AF006C10000000000000010 /* App.xcconfig */;
+			buildSettings = {};
+			name = Release;
+		};
+		6AF006C1000000000000000F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6AF006C10000000000000010 /* App.xcconfig */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Build/App.xcconfig;
+			sourceTree = SOURCE_ROOT;
+		};
+		6AF006C10000000000000011 /* AirportAtlasUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6AF006C10000000000000019 /* UI test configurations */;
+			buildPhases = (
+				6AF006C10000000000000014 /* Test sources */,
+				6AF006C10000000000000015 /* Test frameworks */,
+				6AF006C10000000000000016 /* Test resources */,
+			);
+			buildRules = ();
+			dependencies = (6AF006C10000000000000017 /* App dependency */);
+			fileSystemSynchronizedGroups = (6AF006C10000000000000012 /* UITests */);
+			name = AirportAtlasUITests;
+			productName = AirportAtlasUITests;
+			productReference = 6AF006C10000000000000013 /* AirportAtlasUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		6AF006C10000000000000012 /* UITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = UITests;
+			path = Build/UITests;
+			sourceTree = "<group>";
+		};
+		6AF006C10000000000000013 /* AirportAtlasUITests.xctest */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = AirportAtlasUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		6AF006C10000000000000014 /* Test sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6AF006C10000000000000015 /* Test frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6AF006C10000000000000016 /* Test resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6AF006C10000000000000017 /* App dependency */ = {
+			isa = PBXTargetDependency;
+			target = 6AF006C10000000000000006 /* AirportAtlas */;
+			targetProxy = 6AF006C10000000000000018 /* App proxy */;
+		};
+		6AF006C10000000000000018 /* App proxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6AF006C10000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6AF006C10000000000000006;
+			remoteInfo = AirportAtlas;
+		};
+		6AF006C10000000000000019 /* UI test configurations */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6AF006C1000000000000001A /* Debug */,
+				6AF006C1000000000000001B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6AF006C1000000000000001A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6AF006C1000000000000001C /* UITests.xcconfig */;
+			buildSettings = {};
+			name = Debug;
+		};
+		6AF006C1000000000000001B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6AF006C1000000000000001C /* UITests.xcconfig */;
+			buildSettings = {};
+			name = Release;
+		};
+		6AF006C1000000000000001C /* UITests.xcconfig */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Build/UITests.xcconfig;
+			sourceTree = SOURCE_ROOT;
+		};
+	};
+	rootObject = 6AF006C10000000000000001 /* Project object */;
+}

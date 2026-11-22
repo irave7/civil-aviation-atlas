@@ -1,5 +1,129 @@
 import Foundation
 
+struct FlightGroundPose: Equatable, Sendable {
+    let latitude: Double
+    let longitude: Double
+    let heading: Double
+
+    private static let earthRadius = 6_371_008.8
+
+    func distance(to other: Self) -> Double {
+        let phi = latitude * .pi / 180
+        let otherPhi = other.latitude * .pi / 180
+        let longitudeDelta = (other.longitude - longitude) * .pi / 180
+        let a = pow(sin((otherPhi - phi) / 2), 2) + cos(phi) * cos(otherPhi) * pow(sin(longitudeDelta / 2), 2)
+        return 2 * Self.earthRadius * asin(sqrt(min(1, max(0, a))))
+    }
+
+    func course(to other: Self) -> Double {
+        let phi = latitude * .pi / 180
+        let otherPhi = other.latitude * .pi / 180
+        let longitudeDelta = (other.longitude - longitude) * .pi / 180
+        let east = sin(longitudeDelta) * cos(otherPhi)
+        let north = cos(phi) * sin(otherPhi) - sin(phi) * cos(otherPhi) * cos(longitudeDelta)
+        return Self.normalize(atan2(east, north) * 180 / .pi)
+    }
+
+    func displaced(by distance: Double, toward bearing: Double) -> Self {
+        let angle = distance / Self.earthRadius
+        let theta = bearing * .pi / 180
+        let phi = latitude * .pi / 180
+        let sinPhi = sin(phi), cosPhi = cos(phi)
+        let endPhi = asin(min(1, max(-1, sinPhi * cos(angle) + cosPhi * sin(angle) * cos(theta))))
+        let longitudeShift = atan2(sin(theta) * sin(angle) * cosPhi, cos(angle) - sinPhi * sin(endPhi)) * 180 / .pi
+        return Self(latitude: endPhi * 180 / .pi,
+                    longitude: Self.normalize(longitude + longitudeShift + 180) - 180,
+                    heading: Self.normalize(bearing))
+    }
+
+    func facing(_ heading: Double) -> Self {
+        Self(latitude: latitude, longitude: longitude, heading: Self.normalize(heading))
+    }
+
+    static func normalize(_ heading: Double) -> Double {
+        let value = heading.truncatingRemainder(dividingBy: 360)
+        return value >= 0 ? value : value + 360
+    }
+
+    static func headingChange(from first: Double, to second: Double) -> Double {
+        normalize(second - first + 180) - 180
+    }
+}
+
+struct FlightGroundRoute: Sendable {
+    enum Operation { case departure, arrival }
+
+    struct Connector: Sendable {
+        let runwayDistanceM: Double
+        /// Coordinates start on the runway centerline and end on the connected taxiway.
+        let outwardPath: [FlightGroundPose]
+    }
+
+    let threshold: FlightGroundPose
+    let runwayLengthM: Double
+    let directionName: String
+    let recordedAxis: Bool
+    let usesOpenStreetMapRunway: Bool
+    let connectors: [Connector]
+
+    var runwayHeading: Double { threshold.heading }
+    var runwayExit: FlightGroundPose { pose(onRunway: runwayLengthM) }
+    var touchdownDistanceM: Double { min(350, runwayLengthM * 0.12) }
+    var touchdown: FlightGroundPose { pose(onRunway: touchdownDistanceM) }
+
+    var sourceLabel: String {
+        if !recordedAxis { return "参考跑道轴线" }
+        return connectors.isEmpty ? "已收录跑道中心线" : "已收录跑道 · © OpenStreetMap contributors"
+    }
+
+    func pose(onRunway distance: Double) -> FlightGroundPose {
+        threshold.displaced(by: min(runwayLengthM, max(0, distance)), toward: runwayHeading)
+    }
+
+    var departureConnector: Connector? { connectors.first }
+
+    func exit(afterRunwayDistance distance: Double) -> Connector? {
+        connectors.first { $0.runwayDistanceM >= distance }
+    }
+}
+
+private struct FlightTaxiPath {
+    let points: [FlightGroundPose]
+    private let distances: [Double]
+    private let headings: [Double]
+
+    init(points: [FlightGroundPose]) {
+        self.points = points
+        var distances = [0.0]
+        var headings: [Double] = []
+        for (start, end) in zip(points, points.dropFirst()) {
+            distances.append(distances[distances.count - 1] + start.distance(to: end))
+            headings.append(start.course(to: end))
+        }
+        self.distances = distances
+        self.headings = headings
+    }
+
+    var lengthM: Double { distances.last ?? 0 }
+
+    func pose(at distance: Double, endHeading: Double? = nil) -> FlightGroundPose? {
+        guard let lastPoint = points.last, let lastHeading = headings.last else { return points.first }
+        guard let end = distances.dropFirst().firstIndex(where: { $0 > distance }) else {
+            return lastPoint.facing(endHeading ?? lastHeading)
+        }
+        let start = end - 1
+        let travel = max(0, distance - distances[start])
+        let remaining = distances[end] - distance
+        let heading = headings[start]
+        let pose = points[start].displaced(by: travel, toward: heading)
+        let nextHeading = end < headings.count ? headings[end] : endHeading
+        let turnDistance = min(16, distances[end] - distances[start])
+        guard let nextHeading, remaining < turnDistance else { return pose }
+        let turn = (1 - remaining / turnDistance) * FlightGroundPose.headingChange(from: heading, to: nextHeading)
+        return pose.facing(heading + turn)
+    }
+}
+
 /// A time-compressed simulation that uses representative jet behavior, not aircraft performance tables.
 struct FlightSimulation {
     enum Phase: Int, CaseIterable {
@@ -30,6 +154,19 @@ struct FlightSimulation {
         }
     }
 
+    enum GroundStage: Equatable {
+        case taxiOut, takeoffRoll, landingRoll, taxiIn
+
+        var title: String {
+            switch self {
+            case .taxiOut: "滑出与对正"
+            case .takeoffRoll: "起飞滑跑"
+            case .landingRoll: "接地后减速"
+            case .taxiIn: "脱离跑道与滑入"
+            }
+        }
+    }
+
     enum WindAirport: Equatable { case departure, arrival }
 
     enum Wind: Equatable {
@@ -52,6 +189,8 @@ struct FlightSimulation {
     struct Summary: Equatable {
         let takeoffRollM: Double
         let landingRollM: Double
+        let taxiOutM: Double
+        let taxiInM: Double
         let landingSpeed: Double?
         let touchdownVerticalSpeed: Double?
         let peakAltitude: Double
@@ -76,6 +215,7 @@ struct FlightSimulation {
     var flaps: Flaps = .retracted
     var gearDown = true
     var brake = true
+    var reverseThrust = false
     var wind: Wind = .calm
 
     private(set) var phase: Phase = .briefing
@@ -84,6 +224,7 @@ struct FlightSimulation {
     private(set) var verticalSpeed = 0.0
     private(set) var runwayUsed = 0.0
     private(set) var landingRollM = 0.0
+    private(set) var taxiDistanceM = 0.0
     private(set) var takeoffAborted = false
     private(set) var onGround = true
     let rotationSpeed: Double
@@ -98,6 +239,12 @@ struct FlightSimulation {
     private let destinationRunwayLength: Double?
     private let departureRunwayHeading: Double?
     private let destinationRunwayHeading: Double?
+    private let departureGround: FlightGroundRoute?
+    private let arrivalGround: FlightGroundRoute?
+    private let departureTaxi: FlightTaxiPath?
+    private var departureTaxiComplete = false
+    private var arrivalTaxi: FlightTaxiPath?
+    private var liftoffPose: FlightGroundPose?
     private var elapsed = 0.0
     private var phaseElapsed = 0.0
     private var goArounds = 0
@@ -113,7 +260,8 @@ struct FlightSimulation {
     init(wingspanM: Double? = nil, runwayLengthM: Double? = nil, originElevationFt: Int? = nil,
          destinationElevationFt: Int? = nil, distanceKm: Double = 0,
          departureRunwayHeading: Double? = nil, destinationRunwayHeading: Double? = nil,
-         destinationRunwayLengthM: Double? = nil) {
+         destinationRunwayLengthM: Double? = nil, departureGround: FlightGroundRoute? = nil,
+         arrivalGround: FlightGroundRoute? = nil) {
         let span = wingspanM.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 36
         let size = min(1, max(0, (span - 30) / 48))
         let distance = distanceKm.isFinite ? max(0, distanceKm) : 0
@@ -126,11 +274,70 @@ struct FlightSimulation {
         altitude = originElevation
         rotationSpeed = (133 + 26 * size).rounded()
         referenceApproachSpeed = (130 + 23 * size).rounded()
-        departureRunwayLength = runwayLengthM.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        destinationRunwayLength = destinationRunwayLengthM.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        self.departureRunwayHeading = departureRunwayHeading.flatMap { $0.isFinite ? $0 : nil }
-        self.destinationRunwayHeading = destinationRunwayHeading.flatMap { $0.isFinite ? $0 : nil }
+        departureRunwayLength = departureGround?.runwayLengthM ?? runwayLengthM.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        destinationRunwayLength = arrivalGround?.runwayLengthM ?? destinationRunwayLengthM.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        self.departureRunwayHeading = departureGround?.runwayHeading ?? departureRunwayHeading.flatMap { $0.isFinite ? $0 : nil }
+        self.destinationRunwayHeading = arrivalGround?.runwayHeading ?? destinationRunwayHeading.flatMap { $0.isFinite ? $0 : nil }
+        self.departureGround = departureGround
+        self.arrivalGround = arrivalGround
+        departureTaxi = departureGround?.departureConnector.map { FlightTaxiPath(points: Array($0.outwardPath.reversed())) }
     }
+
+    var groundStage: GroundStage? {
+        switch phase {
+        case .briefing, .takeoff:
+            departureTaxi != nil && !departureTaxiComplete ? .taxiOut : .takeoffRoll
+        case .landing where onGround, .arrived:
+            arrivalTaxi == nil ? .landingRoll : .taxiIn
+        default: nil
+        }
+    }
+
+    var groundPose: FlightGroundPose? {
+        switch groundStage {
+        case .taxiOut: departureTaxi?.pose(at: taxiDistanceM, endHeading: departureGround?.runwayHeading)
+        case .takeoffRoll: departureGround?.pose(onRunway: departureEntryM + runwayUsed)
+        case .landingRoll: arrivalGround?.pose(onRunway: arrivalRunwayPositionM)
+        case .taxiIn: arrivalTaxi?.pose(at: taxiDistanceM)
+        case nil: nil
+        }
+    }
+
+    var departureAirStart: FlightGroundPose? {
+        liftoffPose ?? departureGround?.pose(onRunway: departureEntryM)
+    }
+
+    var arrivalAirEnd: FlightGroundPose? { arrivalGround?.touchdown }
+
+    var groundTrack: [FlightGroundPose] {
+        switch groundStage {
+        case .taxiOut: departureTaxi?.points ?? []
+        case .takeoffRoll: departureGround.map { [$0.pose(onRunway: departureEntryM), $0.runwayExit] } ?? []
+        case .landingRoll: arrivalGround.map { [$0.touchdown, $0.runwayExit] } ?? []
+        case .taxiIn: arrivalTaxi?.points ?? []
+        case nil: []
+        }
+    }
+
+    var runwayTrack: [FlightGroundPose] { activeGroundRoute.map { [$0.threshold, $0.runwayExit] } ?? [] }
+
+    var groundSourceLabel: String? { activeGroundRoute?.sourceLabel }
+
+    var groundSpeedKnots: Double { groundSpeed }
+
+    var canUseReverseThrust: Bool { phase == .landing && groundStage == .landingRoll && throttle < 10 && airspeed > 15 }
+
+    private var activeGroundRoute: FlightGroundRoute? {
+        switch groundStage {
+        case .taxiOut, .takeoffRoll: departureGround
+        case .landingRoll, .taxiIn: arrivalGround
+        case nil: nil
+        }
+    }
+
+    private var departureEntryM: Double { departureGround?.departureConnector?.runwayDistanceM ?? 0 }
+    private var arrivalRunwayPositionM: Double { (arrivalGround?.touchdownDistanceM ?? 0) + landingRollM }
+    private var isTaxiing: Bool { groundStage == .taxiOut || groundStage == .taxiIn }
 
     var progress: Double {
         let climbEnd = min(0.24, 100 / routeDistance)
@@ -154,15 +361,19 @@ struct FlightSimulation {
     var phaseProgress: Double {
         switch phase {
         case .briefing: return 0
-        case .takeoff: return unit(airspeed / rotationSpeed)
+        case .takeoff:
+            if groundStage == .taxiOut, let departureTaxi { return 0.2 * unit(taxiDistanceM / departureTaxi.lengthM) }
+            let portion = unit(airspeed / rotationSpeed)
+            return departureTaxi == nil ? portion : 0.2 + 0.8 * portion
         case .climb:
-            let start = returningToApproach ? destinationElevation : originElevation
+            let start = returningToApproach ? destinationElevation : originElevation + 35
             return unit((altitude - start) / (climbTargetAltitude - start))
         case .cruise: return unit(phaseElapsed / cruiseDuration)
         case .approach:
             let height = climbTargetAltitude - destinationElevation
             return 1 - unit((altitude - destinationElevation - 1_350) / (height - 1_350))
         case .landing:
+            if let arrivalTaxi { return 0.95 + 0.05 * unit(taxiDistanceM / arrivalTaxi.lengthM) }
             return onGround ? 0.8 + 0.2 * (1 - unit(airspeed / max(1, landingSpeed ?? airspeed)))
                 : 0.8 * (1 - unit((altitude - destinationElevation) / 1_350))
         case .arrived: return 1
@@ -176,7 +387,13 @@ struct FlightSimulation {
     var canGoAround: Bool { phase == .approach || (phase == .landing && !onGround) }
 
     var checklist: [Check] {
-        switch phase {
+        if let stage = groundStage, stage == .taxiOut || stage == .taxiIn {
+            return [Check("taxi-gear", "确认起落架放下", gearDown),
+                    Check("taxi-brake", "按需松开刹车", !brake),
+                    Check("taxi-power", "使用低推力滑行", (0.1...55).contains(throttle)),
+                    Check("taxi-speed", "保持地面低速", (0.5...22).contains(groundSpeed))]
+        }
+        return switch phase {
         case .briefing, .takeoff:
             [Check("takeoff-flaps", "襟翼设为起飞", flaps == .takeoff),
              Check("takeoff-gear", "保持起落架放下", gearDown),
@@ -201,14 +418,19 @@ struct FlightSimulation {
              Check("arrival-bank", "控制坡度", abs(effectiveBank) <= 10)]
         case .landing, .arrived:
             [Check("rollout-throttle", "将推力收至慢车", throttle < 10),
+             Check("rollout-reverse", "按需使用反推减速", reverseThrust || airspeed <= 15),
              Check("rollout-brake", "使用刹车减速", brake),
              Check("rollout-stop", "在跑道上停稳", airspeed <= 3)]
         }
     }
 
     var instruction: String {
-        switch phase {
-        case .briefing: "检查机场跑道、客机和天气。准备好后开始起飞滑跑。"
+        if phase != .briefing && phase != .arrived {
+            if groundStage == .taxiOut { return "松开刹车并增加少量推力，沿滑行道前往所选跑道入口。" }
+            if groundStage == .taxiIn { return "松开刹车并以低推力滑行，从可用出口脱离跑道。" }
+        }
+        return switch phase {
+        case .briefing: "检查机场跑道、客机和天气。准备好后开始飞行。"
         case .takeoff where takeoffAborted: "已用尽跑道，模拟已停止。重置航程后重新起飞。"
         case .takeoff where gearDown && flaps == .takeoff && !brake && throttle >= 75:
             airspeed < rotationSpeed ? "保持滑跑，达到参考速度后轻抬机头。" : "轻抬机头并保持机翼平稳，开始离地。"
@@ -225,10 +447,12 @@ struct FlightSimulation {
 
     var summary: Summary? {
         guard phase == .arrived else { return nil }
-        return Summary(takeoffRollM: runwayUsed, landingRollM: landingRollM, landingSpeed: landingSpeed,
+        return Summary(takeoffRollM: runwayUsed, landingRollM: landingRollM,
+                       taxiOutM: departureTaxiComplete ? (departureTaxi?.lengthM ?? 0) : 0,
+                       taxiInM: arrivalTaxi == nil ? 0 : taxiDistanceM, landingSpeed: landingSpeed,
                        touchdownVerticalSpeed: touchdownVerticalSpeed, peakAltitude: peakAltitude,
                        peakSpeed: peakSpeed, elapsed: elapsed, goArounds: goArounds, maxBank: maxBank,
-                       landingRunwayExceeded: destinationRunwayLength.map { landingRollM > $0 } ?? false,
+                       landingRunwayExceeded: destinationRunwayLength.map { arrivalRunwayPositionM > $0 } ?? false,
                        samples: samples)
     }
 
@@ -245,12 +469,17 @@ struct FlightSimulation {
         flaps = .retracted
         gearDown = true
         brake = true
+        reverseThrust = false
         transition(to: .briefing)
         airspeed = 0
         altitude = originElevation
         verticalSpeed = 0
         runwayUsed = 0
         landingRollM = 0
+        taxiDistanceM = 0
+        departureTaxiComplete = false
+        arrivalTaxi = nil
+        liftoffPose = nil
         takeoffAborted = false
         onGround = true
         elapsed = 0
@@ -279,6 +508,13 @@ struct FlightSimulation {
     mutating func applyRecommendedControls() {
         bank = -bankCorrection
         brake = false
+        if isTaxiing {
+            throttle = 31
+            pitch = 0
+            gearDown = true
+            reverseThrust = false
+            return
+        }
         switch phase {
         case .briefing, .takeoff:
             gearDown = true
@@ -303,6 +539,7 @@ struct FlightSimulation {
             throttle = 0
             pitch = 0
             brake = true
+            reverseThrust = canUseReverseThrust
         }
     }
 
@@ -320,7 +557,10 @@ struct FlightSimulation {
     private var returningToApproach: Bool { goAroundTargetAltitude != nil }
     private var climbTargetAltitude: Double { goAroundTargetAltitude ?? cruiseAltitude }
     private var approachSpeedRange: ClosedRange<Double> { (referenceApproachSpeed - 12)...(referenceApproachSpeed + 28) }
-    private var groundSpeed: Double { airspeed > 0 ? max(0, airspeed - (headwindKnots ?? 0)) : 0 }
+    private var groundSpeed: Double {
+        guard airspeed > 0 else { return 0 }
+        return isTaxiing ? airspeed : max(0, airspeed - (headwindKnots ?? 0))
+    }
     private var power: Double { unit(throttle / 100) }
 
     private var nearestAirport: WindAirport {
@@ -383,16 +623,21 @@ struct FlightSimulation {
 
     private mutating func advanceTakeoff(_ step: Double) {
         guard !takeoffAborted else { return }
+        if !departureTaxiComplete, let departureTaxi {
+            if advanceTaxi(step, along: departureTaxi) { departureTaxiComplete = true }
+            return
+        }
         let previousGroundSpeed = groundSpeed
         let acceleration = brake ? -19 : 10.5 * power - 1.7 - airspeed * 0.004
         airspeed = min(210, max(0, airspeed + acceleration * step))
         runwayUsed += (previousGroundSpeed + groundSpeed) * 0.5 * 0.514_444 * step
         verticalSpeed = 0
-        if let runwayLength = departureRunwayLength, runwayUsed > runwayLength {
+        if let runwayLength = departureRunwayLength, departureEntryM + runwayUsed > runwayLength {
             takeoffAborted = true
             airspeed = 0
         } else if gearDown && flaps == .takeoff && !brake && throttle >= 75 && airspeed >= rotationSpeed
                     && (5...14).contains(pitch) && abs(effectiveBank) <= 8 {
+            liftoffPose = departureGround?.pose(onRunway: departureEntryM + runwayUsed)
             onGround = false
             altitude = originElevation + 35
             transition(to: .climb)
@@ -432,11 +677,16 @@ struct FlightSimulation {
 
     private mutating func advanceLanding(_ step: Double) {
         if onGround {
+            if let arrivalTaxi {
+                if advanceTaxi(step, along: arrivalTaxi) { transition(to: .arrived) }
+                return
+            }
             let previousGroundSpeed = groundSpeed
-            let acceleration = 5 * power - (brake ? 17 : 4.0)
+            reverseThrust = reverseThrust && canUseReverseThrust
+            let acceleration = 5 * power - (brake ? 17 : 4.0) - (reverseThrust ? 6 : 0)
             airspeed = max(0, airspeed + acceleration * step)
             landingRollM += (previousGroundSpeed + groundSpeed) * 0.5 * 0.514_444 * step
-            if airspeed <= 3 && throttle < 10 { transition(to: .arrived) }
+            if airspeed <= 3 && throttle < 10 { beginArrivalTaxi() }
             return
         }
 
@@ -457,6 +707,31 @@ struct FlightSimulation {
         } else {
             verticalSpeed = 0
         }
+    }
+
+    private mutating func beginArrivalTaxi() {
+        guard let runway = arrivalGround, let connector = runway.exit(afterRunwayDistance: arrivalRunwayPositionM),
+              let first = connector.outwardPath.first else {
+            transition(to: .arrived)
+            return
+        }
+        let current = runway.pose(onRunway: arrivalRunwayPositionM)
+        let continuation = current.distance(to: first) > 1 ? [current] + connector.outwardPath : connector.outwardPath
+        arrivalTaxi = FlightTaxiPath(points: continuation)
+        taxiDistanceM = 0
+        airspeed = 0
+        reverseThrust = false
+    }
+
+    private mutating func advanceTaxi(_ step: Double, along path: FlightTaxiPath) -> Bool {
+        let previousSpeed = airspeed
+        let acceleration = brake || !gearDown ? -12 : 14 * power - 0.7 - airspeed * 0.10
+        airspeed = min(22, max(0, airspeed + acceleration * step))
+        // Preserve meter-scale geometry while compressing the time spent on each mapped taxiway.
+        taxiDistanceM = min(path.lengthM, taxiDistanceM + (previousSpeed + airspeed) * 0.5 * 0.514_444 * step * 3.5)
+        guard taxiDistanceM >= path.lengthM else { return false }
+        airspeed = 0
+        return true
     }
 
     private mutating func flyTowardSpeed(_ target: Double, step: Double) {

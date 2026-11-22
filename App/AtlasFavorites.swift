@@ -67,8 +67,12 @@ struct AtlasFavoriteButton: View {
         Button {
             favorites.toggle(id, kind: kind)
         } label: {
-            Label(isFavorite ? "取消收藏\(kind.displayName)" : "收藏\(kind.displayName)",
-                  systemImage: isFavorite ? "star.fill" : "star")
+            Label {
+                Text(isFavorite ? "取消收藏\(kind.displayName)" : "收藏\(kind.displayName)")
+            } icon: {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .symbolEffect(.bounce, value: isFavorite)
+            }
         }
         .accessibilityIdentifier("favorite-\(kind.rawValue)-\(id)")
         .accessibilityValue(isFavorite ? "已收藏" : "未收藏")

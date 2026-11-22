@@ -48,13 +48,17 @@ struct AirportPlanView: View {
         return degrees == 0 ? "正北朝上" : "正北朝向 \((degrees + 360) % 360)°"
     }
 
+    private var nearestNorth: Angle {
+        .degrees((rotation.degrees / 360).rounded() * 360)
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let bounds = plan.bounds
             let fit = max(0.1, min(geometry.size.width / CGFloat(max(6, bounds.size.x)), geometry.size.height / CGFloat(max(6, bounds.size.y))) * 0.75)
             let scale = fit * zoom
-            Canvas { context, size in
-                draw(in: context, size: size, center: bounds.center, scale: scale, rotation: rotation)
+            AirportPlanSurface(scale: scale, angle: rotation.radians, offset: offset) { context, size, drawScale, angle, drawOffset in
+                draw(in: context, size: size, center: bounds.center, scale: drawScale, rotation: .radians(angle), offset: drawOffset)
             }
             .background(Color(red: 0.063, green: 0.104, blue: 0.145))
             .overlay {
@@ -98,7 +102,7 @@ struct AirportPlanView: View {
     private var controls: some View {
         HStack(spacing: 7) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { rotation = .zero }
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) { rotation = nearestNorth }
             } label: {
                 Label {
                     Text("北")
@@ -113,10 +117,10 @@ struct AirportPlanView: View {
             .accessibilityValue(headingLabel)
             .accessibilityIdentifier("airport-plan-north")
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
                     zoom = 1
                     offset = .zero
-                    rotation = .zero
+                    rotation = nearestNorth
                 }
             } label: {
                 Label("查看全场", systemImage: "viewfinder")
@@ -199,7 +203,7 @@ struct AirportPlanView: View {
         }
     }
 
-    private func draw(in context: GraphicsContext, size: CGSize, center: SIMD2<Float>, scale: CGFloat, rotation: Angle) {
+    private func draw(in context: GraphicsContext, size: CGSize, center: SIMD2<Float>, scale: CGFloat, rotation: Angle, offset: CGSize) {
         let origin = CGPoint(x: size.width / 2 + offset.width, y: size.height / 2 + offset.height)
         let transform = CGAffineTransform(rotationAngle: rotation.radians).concatenating(
             CGAffineTransform(translationX: origin.x, y: origin.y)
@@ -291,6 +295,26 @@ struct AirportPlanView: View {
         case .hangar, .building: .serviceBuildings
         case .boundary: nil
         }
+    }
+}
+
+private struct AirportPlanSurface: View, Animatable {
+    var scale: CGFloat
+    var angle: Double
+    var offset: CGSize
+    let draw: (GraphicsContext, CGSize, CGFloat, Double, CGSize) -> Void
+
+    var animatableData: AnimatablePair<Double, AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>>> {
+        get { AnimatablePair(angle, AnimatablePair(scale, AnimatablePair(offset.width, offset.height))) }
+        set {
+            angle = newValue.first
+            scale = newValue.second.first
+            offset = CGSize(width: newValue.second.second.first, height: newValue.second.second.second)
+        }
+    }
+
+    var body: some View {
+        Canvas { context, size in draw(context, size, scale, angle, offset) }
     }
 }
 

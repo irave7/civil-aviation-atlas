@@ -187,13 +187,18 @@ struct FlightRouteList<Trailing: View>: View {
     @FocusState private var searchFocused: Bool
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     private var periodDay: String { FlightCalendar.isoDate(selectedDate) }
 
-    private var searchTerms: [Substring] { query.split(whereSeparator: \.isWhitespace) }
+    private var searchTerms: [String] {
+        query.split(whereSeparator: \.isWhitespace)
+            .map { Self.searchKey(String($0)) }
+            .filter { !$0.isEmpty }
+    }
 
-    private func sortedRoutes(on periodDay: String, matching terms: [Substring]) -> [FlightRoute] {
+    private func sortedRoutes(on periodDay: String, matching terms: [String]) -> [FlightRoute] {
         routes.filter { route in
             filter.includes(route) && (!plannedOnly || filter == .observed || route.isPublishedPlan(on: periodDay))
                 && matchesSearch(route, terms: terms)
@@ -206,19 +211,18 @@ struct FlightRouteList<Trailing: View>: View {
         }
     }
 
-    private func matchesSearch(_ route: FlightRoute, terms: [Substring]) -> Bool {
+    private func matchesSearch(_ route: FlightRoute, terms: [String]) -> Bool {
         if terms.isEmpty { return true }
         let airports = [route.origin, route.destination].compactMap(library.airport)
         let titles = airports.flatMap(\.nameSearchTerms)
         let fields = [route.origin, route.destination, route.airline, route.flightNumber ?? ""] + route.aircraftSearchTerms
-        func searchKey(_ value: String) -> String {
-            value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
-                .filter { $0.isLetter || $0.isNumber }
-        }
-        let searchable = (fields + titles).map(searchKey)
-        return terms.map { searchKey(String($0)) }.filter { !$0.isEmpty }.allSatisfy { term in
-            searchable.contains { $0.contains(term) }
-        }
+        let searchable = (fields + titles).map(Self.searchKey)
+        return terms.allSatisfy { term in searchable.contains { $0.contains(term) } }
+    }
+
+    private static func searchKey(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            .filter { $0.isLetter || $0.isNumber }
     }
 
     private func longestScheduled(in records: [FlightRoute], on date: String) -> FlightRoute? {
@@ -300,6 +304,8 @@ struct FlightRouteList<Trailing: View>: View {
             } header: {
                 let title = distanceOrder ? "已收录不经停航线" : "已收录班表与航线"
                 Text("\(title) · \(records.count.formatted()) 条")
+                    .contentTransition(.numericText(value: Double(records.count)))
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: records.count)
             }
         }
         .listStyle(.insetGrouped)

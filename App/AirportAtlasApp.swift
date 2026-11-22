@@ -42,6 +42,7 @@ struct AtlasHome: View {
     @State private var tabletDestination: AtlasDestination = .globe
     @State private var phonePath: [AtlasDestination] = []
     @State private var showsPhoneDirectory = false
+    @State private var phoneDirectoryDestination: AtlasDestination?
     @State private var showsAppearance = false
     @State private var query = ""
     @State private var visibility: NavigationSplitViewVisibility = .detailOnly
@@ -52,6 +53,7 @@ struct AtlasHome: View {
     private var resolvedScheme: ColorScheme { appearance.colorScheme ?? colorScheme }
     private var palette: AtlasPalette { AtlasPalette(resolvedScheme, contrast: colorContrast) }
     private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    private var navigationAnimation: Animation? { reduceMotion ? nil : .smooth(duration: 0.24) }
     private var destination: AtlasDestination {
         isPhone ? phonePath.last ?? .globe : tabletDestination
     }
@@ -112,7 +114,7 @@ struct AtlasHome: View {
                         }
                 }
         }
-        .sheet(isPresented: $showsPhoneDirectory, onDismiss: { query = "" }) {
+        .sheet(isPresented: $showsPhoneDirectory, onDismiss: finishPhoneDirectory) {
             NavigationStack {
                 sidebar
                     .navigationTitle("民航图鉴")
@@ -143,18 +145,24 @@ struct AtlasHome: View {
         } detail: {
             ZStack {
                 GlobeView(library: library, open: { navigate(.airport($0.id)) })
+                    .frame(width: destination == .globe ? nil : 0, height: destination == .globe ? nil : 0)
+                    .clipped()
                     .opacity(destination == .globe ? 1 : 0)
                     .allowsHitTesting(destination == .globe)
                     .accessibilityHidden(destination != .globe)
+                    .animation(nil, value: destination == .globe)
                     .zIndex(0)
                 if destination != .globe {
                     detail(destination)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(palette.page)
-                        .transition(.opacity)
+                        .id(destination)
+                        .transition(reduceMotion ? .identity : .opacity)
                         .zIndex(1)
                 }
             }
+            .clipped()
+            .animation(navigationAnimation, value: destination)
             .navigationTitle(title(for: destination))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(removing: .sidebarToggle)
@@ -278,7 +286,7 @@ struct AtlasHome: View {
                 ContentUnavailableView("机场资料暂不可用", systemImage: "airplane.arrival")
             }
         case .explore, .simulator:
-            FlightExploration(library: library, simulatesFlight: page == .simulator) { navigate(.airport($0.id)) }
+            FlightExploration(library: library, favorites: favorites, simulatesFlight: page == .simulator) { navigate(.airport($0.id)) }
         case .fleet:
             FleetDirectory(aircraft: library.aircraft) { navigate(.aircraft($0.id)) }
         case .aircraft(let id):
@@ -387,29 +395,39 @@ struct AtlasHome: View {
 
     private func navigate(_ next: AtlasDestination) {
         if isPhone {
-            if next == .globe {
+            if showsPhoneDirectory {
+                phoneDirectoryDestination = next
+                showsPhoneDirectory = false
+            } else if next == .globe {
                 phonePath.removeAll()
-            } else if showsPhoneDirectory {
-                phonePath = [next]
             } else if next != phonePath.last {
                 phonePath.append(next)
             }
-            showsPhoneDirectory = false
             return
         }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-            tabletDestination = next
-            if horizontal == .compact { compactColumn = .detail }
-            switch next {
-            case .globe, .airport, .aircraft: setImmersive(true)
-            case .favorites, .airports, .fleet, .explore, .simulator, .gestureGuide, .privacy, .sources: setImmersive(false)
-            }
+        tabletDestination = next
+        if horizontal == .compact { compactColumn = .detail }
+        switch next {
+        case .globe, .airport, .aircraft: setImmersive(true)
+        case .favorites, .airports, .fleet, .explore, .simulator, .gestureGuide, .privacy, .sources: setImmersive(false)
         }
+    }
+
+    private func finishPhoneDirectory() {
+        query = ""
+        guard let next = phoneDirectoryDestination else { return }
+        phoneDirectoryDestination = nil
+        phonePath = next == .globe ? [] : [next]
     }
 
     private func setImmersive(_ immersive: Bool) {
         guard !isPhone, horizontal != .compact else { return }
-        visibility = immersive ? .detailOnly : .all
+        setSidebarVisibility(immersive ? .detailOnly : .all)
+    }
+
+    private func setSidebarVisibility(_ next: NavigationSplitViewVisibility) {
+        guard visibility != next else { return }
+        withAnimation(navigationAnimation) { visibility = next }
     }
 
     private var appearanceButton: some View {
@@ -488,9 +506,7 @@ struct AtlasHome: View {
             } else if horizontal == .compact {
                 compactColumn = .sidebar
             } else {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-                    visibility = closed ? .all : .detailOnly
-                }
+                setSidebarVisibility(closed ? .all : .detailOnly)
             }
         }
         .accessibilityIdentifier("atlas-sidebar-toggle")

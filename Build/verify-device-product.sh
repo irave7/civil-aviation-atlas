@@ -37,6 +37,7 @@ fi
 
 python3 - "$app" "$build_root" <<'PY'
 import plistlib
+import re
 import sys
 from pathlib import Path
 
@@ -75,13 +76,36 @@ for filename in expected | common_files:
 narration_files = {
     f"narration-{voice}-{cue}.m4a"
     for voice in ("captain", "guide", "story")
-    for cue in ("departing", "cruise", "approach", "arrived", "rotate", "gearUp", "gearDown")
+    for cue in ("departing", "cruise", "approach", "arrived", "rotate", "gearUp", "gearDown",
+                "briefing", "taxiOut", "roll", "touchdown", "taxiIn")
 }
-for filename in narration_files:
-    source = resources / "Narration" / filename
-    bundled = next((entry / filename for entry in (app, app / "Narration", app / "Resources/Narration")
-                    if (entry / filename).is_file()), None)
-    assert bundled and bundled.read_bytes() == source.read_bytes(), f"Missing or mismatched narration: {filename}"
+flight_effects = {f"flight-{cue}.m4a" for cue in
+                  ("cabin", "engine", "airflow", "roll", "chime", "switch", "touchdown", "gear", "reverse", "flaps")}
+carrier_files = {
+    f"carrier-{carrier}-{phase}.m4a"
+    for carrier in ("air-china", "china-eastern", "china-southern", "xiamen-air",
+                    "japan-airlines", "singapore-airlines", "emirates", "lufthansa")
+    for phase in ("briefing", "departing", "approach", "arrived")
+}
+route_files = {
+    f"route-{key}-{phase}-{variant}.m4a"
+    for key in ("SHA", "PEK", "FOC", "PVG", "CAN", "TFU", "SIN", "HND", "JFK", "SFO",
+                "PKX", "XMN", "SZX", "HKG", "NRT", "ICN", "LAX", "LHR", "DXB", "CN", "ASIA", "WORLD")
+    for phase in ("departure", "arrival")
+    for variant in (0, 1)
+}
+challenge_source = (project / "App" / "FlightChallenges.swift").read_text()
+challenge_files = {f"challenge-{origin}-{destination}.m4a" for origin, destination in
+                   re.findall(r'\.init\("([A-Z]{3})", "([A-Z]{3})"', challenge_source)}
+assert len(challenge_files) >= 20, "The representative route audio list is incomplete"
+for folder, files in (("Narration", narration_files), ("FlightEffects", flight_effects),
+                      ("CarrierCabin", carrier_files), ("RouteVoices", route_files),
+                      ("ChallengeVoices", challenge_files)):
+    for filename in files:
+        source = resources / folder / filename
+        bundled = next((entry / filename for entry in (app, app / folder, app / "Resources" / folder)
+                        if (entry / filename).is_file()), None)
+        assert bundled and bundled.read_bytes() == source.read_bytes(), f"Missing or mismatched audio: {filename}"
 for filename in excluded:
     assert not (app / filename).exists(), f"Unexpected distribution resource: {filename}"
 manifest = plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes())

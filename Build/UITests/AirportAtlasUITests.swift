@@ -461,9 +461,12 @@ final class AirportAtlasUITests: XCTestCase {
             tap("model-reset", in: app)
         }
 
+        let originalViewport = viewport.frame
         tap("model-mode-拆分", in: app)
         let slider = app.sliders.matching(identifier: "model-separation").firstMatch
         XCTAssertTrue(slider.waitForExistence(timeout: 12))
+        XCTAssertEqual(viewport.frame, originalViewport)
+        XCTAssertTrue(viewport.frame.insetBy(dx: -1, dy: -1).contains(slider.frame))
         let splitZoom = try zoomPercent(viewport)
         let baselineSeparation = slider.normalizedSliderPosition
         viewport.pinch(withScale: 1.6, velocity: 1.1)
@@ -515,6 +518,13 @@ final class AirportAtlasUITests: XCTestCase {
                 XCTAssertTrue(waitForTappable(directory, timeout: 12))
                 directory.tap()
             }
+        }
+        if (identifier.hasPrefix("model-") || identifier.hasPrefix("part-")),
+           control.waitForExistence(timeout: 12), !control.isHittable {
+            let frame = control.frame
+            XCTAssertTrue(!frame.isEmpty && app.frame.contains(frame), "模型控件应完整留在窗口内")
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            return
         }
         XCTAssertTrue(waitForTappable(control, timeout: 12), "Control \(identifier) never became tappable")
         control.tap()

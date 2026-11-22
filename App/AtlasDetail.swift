@@ -2,7 +2,7 @@ import MapKit
 import SwiftUI
 import UIKit
 
-private enum AirportPanel: String, CaseIterable, Identifiable {
+private enum AirportPanel: String, CaseIterable, Identifiable, Hashable {
     case model = "三维模型"
     case plan = "平面图"
     case imagery = "实景"
@@ -61,13 +61,11 @@ struct AirportDetail: View {
     }
 
     var body: some View {
-        let header = airportHeader
-        let content = airportContent.frame(maxWidth: .infinity, maxHeight: .infinity)
-        let stack = VStack(spacing: 0) {
-            header
-            content
+        VStack(spacing: 0) {
+            airportHeader
+            AtlasPanelViewport(selection: selected) { airportContent }
         }
-        return stack.sheet(item: $highlightedRoute, content: routeSheet)
+        .sheet(item: $highlightedRoute, content: routeSheet)
     }
 
     @ViewBuilder
@@ -86,7 +84,11 @@ struct AirportDetail: View {
                 } else {
                     ProgressView("载入机场模型")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .task { model = AirportModels.make(for: airport) }
+                        .task {
+                            await Task.yield()
+                            guard !Task.isCancelled else { return }
+                            model = AirportModels.make(for: airport)
+                        }
                 }
                 #endif
             case .imagery:
@@ -147,7 +149,7 @@ struct AirportDetail: View {
 
 @MainActor
 struct AircraftDetail: View {
-    private enum Page { case model, routes, data }
+    private enum Page: Hashable { case model, routes, data }
     let profile: AircraftProfile
     let library: AtlasLibrary
     let onAirport: (Airport) -> Void
@@ -161,7 +163,7 @@ struct AircraftDetail: View {
     private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
 
     var body: some View {
-        Group {
+        AtlasPanelViewport(selection: page) {
             switch page {
             case .model:
                 if let model, let configuration {
@@ -176,6 +178,8 @@ struct AircraftDetail: View {
                     ProgressView("载入客机模型")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .task {
+                            await Task.yield()
+                            guard !Task.isCancelled else { return }
                             if let configuration = profile.configurations.first { set(configuration) }
                         }
                 }
@@ -213,9 +217,9 @@ struct AircraftDetail: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             AtlasPanelBar { compact in
-                PanelButton(title: "三维模型", symbol: "cube", selected: page == .model, id: "aircraft-mode-model", compact: compact) { page = .model }
-                PanelButton(title: "执飞航线", symbol: "point.topleft.down.to.point.bottomright.curvepath", selected: page == .routes, id: "aircraft-mode-routes", compact: compact) { page = .routes }
-                PanelButton(title: "机型资料", symbol: "info.circle", selected: page == .data, id: "aircraft-mode-data", compact: compact) { page = .data }
+                PanelButton(title: "三维模型", symbol: "cube", selected: page == .model, id: "aircraft-mode-model", compact: compact) { selectPage(.model) }
+                PanelButton(title: "执飞航线", symbol: "point.topleft.down.to.point.bottomright.curvepath", selected: page == .routes, id: "aircraft-mode-routes", compact: compact) { selectPage(.routes) }
+                PanelButton(title: "机型资料", symbol: "info.circle", selected: page == .data, id: "aircraft-mode-data", compact: compact) { selectPage(.data) }
             }
         }
         .toolbar {
@@ -271,9 +275,12 @@ struct AircraftDetail: View {
             }
             .presentationSizing(.page)
         }
-        .onChange(of: page) { _, current in
-            setImmersive(current == .model)
-        }
+    }
+
+    private func selectPage(_ next: Page) {
+        guard next != page else { return }
+        page = next
+        setImmersive(next == .model)
     }
 
     private var liveryButton: some View {
@@ -507,6 +514,23 @@ private struct AirportOverview: View {
     }
 }
 
+private struct AtlasPanelViewport<Selection: Hashable, Content: View>: View {
+    let selection: Selection
+    @ViewBuilder let content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .id(selection)
+                .transition(reduceMotion ? .identity : .opacity)
+        }
+        .clipped()
+        .animation(reduceMotion ? nil : .smooth(duration: 0.20), value: selection)
+    }
+}
+
 private struct AtlasPanelBar<Content: View>: View {
     @ViewBuilder let content: (Bool) -> Content
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -554,6 +578,7 @@ private struct PanelButton: View {
     let action: () -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let palette = AtlasPalette(scheme, contrast: contrast)
@@ -581,6 +606,7 @@ private struct PanelButton: View {
                 }
             }
             .contentShape(.rect)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: selected)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)

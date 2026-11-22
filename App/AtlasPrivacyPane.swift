@@ -8,7 +8,7 @@ struct AtlasPrivacyPane: View {
         List {
             Section("资料与权限") {
                 Text("浏览图鉴无需注册或登录。应用不包含广告、跨应用追踪或运营方分析服务，也不会请求设备定位、相机、麦克风、通讯录或照片库权限。")
-                Text("搜索在设备上执行。机场与客机收藏、自定义涂装保存在设备上。应用提供本机收藏清除功能，设备备份由系统设置管理。")
+                Text("搜索在设备上执行。机场与客机收藏、自定义涂装、模拟关卡进度和播报偏好保存在设备上。应用提供本机收藏清除功能，设备备份由系统设置管理。")
             }
             Section("在线服务") {
                 if DistributionPolicy.mapsAvailable {
@@ -16,7 +16,7 @@ struct AtlasPrivacyPane: View {
                     Link("Apple 地图与隐私", destination: URL(string: "https://www.apple.com.cn/legal/privacy/data/zh-cn/apple-maps/")!)
                 }
                 if DistributionPolicy.mapsAvailable && !DistributionPolicy.isMainlandReview {
-                    Text("境外机场的历史卫星影像通过 EOX 加载瓦片。影像提供方会收到所显示区域和访问所需的网络信息。")
+                    Text("境外机场的航空影像按地区通过 USGS、国土地理院、法国 IGN、西班牙 IGN、PDOK 或 swisstopo 加载。EOX 提供历史卫星影像。影像提供方会收到所显示区域的瓦片编号和访问所需的网络信息。")
                 }
                 if DistributionPolicy.liveFlightsAvailable {
                     Text("查询航班动态或历史记录时，机场或数据提供方会收到查询所需的机场、日期或方向，以及访问所需的网络信息。")

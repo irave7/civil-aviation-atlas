@@ -14,7 +14,8 @@ enum FlightSimulationChecks {
             try checkObservedWind(at: .departure)
             try checkObservedWind(at: .arrival)
             try checkShortRunway()
-            print("Passed complete flights, stage gates, runway limits, observed wind, route progress and debrief.")
+            try checkRunwayAndTaxiTrack()
+            print("Passed complete flights, runway and taxiway progression, reverse thrust, wind, and debrief.")
             #if CHECK_TOUCH_MOVEMENT
             try checkTouchMovement()
             print("Passed two-finger zoom, three-finger separation, and lift-to-two isolation.")
@@ -115,6 +116,70 @@ enum FlightSimulationChecks {
             try require(flight.headwindKnots == nil && flight.crosswindKnots == nil,
                         "Runway wind components were invented without a reported direction.")
         }
+    }
+
+    private static func checkRunwayAndTaxiTrack() throws {
+        func runway(at threshold: FlightGroundPose, entry: Double) -> FlightGroundRoute {
+            let onAxis = threshold.displaced(by: entry, toward: threshold.heading)
+            let junction = onAxis.displaced(by: 85, toward: 90)
+            let apron = junction.displaced(by: 190, toward: 35)
+            let connector = FlightGroundRoute.Connector(runwayDistanceM: entry, outwardPath: [onAxis, junction, apron])
+            return FlightGroundRoute(threshold: threshold, runwayLengthM: 3_300, directionName: "01",
+                                     recordedAxis: true, usesOpenStreetMapRunway: false, connectors: [connector])
+        }
+
+        let start = runway(at: FlightGroundPose(latitude: 31.20, longitude: 121.33, heading: 4), entry: 120)
+        let end = runway(at: FlightGroundPose(latitude: 40.07, longitude: 116.59, heading: 355), entry: 1_100)
+        var flight = FlightSimulation(wingspanM: 35.8, distanceKm: 1_076, departureGround: start, arrivalGround: end)
+        flight.start()
+        try require(flight.groundStage == .taxiOut && flight.groundTrack.count == 3 && flight.runwayTrack.count == 2,
+                    "Departure did not use the selected taxiway and runway axis.")
+        guard let parking = flight.groundPose else { throw Failure("The departure taxiway omitted its starting pose.") }
+        flight.advance(by: 1)
+        try require(flight.groundPose == parking && flight.taxiDistanceM == 0,
+                    "Taxi started with brakes applied and no push.")
+        flight.applyRecommendedControls()
+        flight.advance(by: 1)
+        try require(flight.groundPose != parking && flight.taxiDistanceM > 0 && flight.groundSpeedKnots <= 22,
+                    "Taxi did not respond to low thrust and brake release.")
+
+        for _ in 0..<600 where flight.groundStage == .taxiOut {
+            flight.applyRecommendedControls()
+            flight.advance(by: 0.1)
+        }
+        try require(flight.groundStage == .takeoffRoll && flight.groundPose == start.pose(onRunway: 120),
+                    "Taxiway-to-runway transition moved away from the selected intersection.")
+        try advance(to: .climb, flight: &flight)
+        guard let liftoff = flight.departureAirStart else { throw Failure("The airborne route omitted its liftoff anchor.") }
+        try require(liftoff.distance(to: start.pose(onRunway: 120 + flight.runwayUsed)) < 0.01 && flight.progress < 0.001,
+                    "Ground and airborne positions jumped on liftoff.")
+        try require(flight.arrivalAirEnd == end.touchdown && !flight.canUseReverseThrust,
+                    "The arrival route does not end at touchdown or allowed airborne reverse thrust.")
+        try advance(to: .landing, flight: &flight)
+        for _ in 0..<600 where !flight.onGround {
+            flight.applyRecommendedControls()
+            flight.advance(by: 0.1)
+        }
+        try require(flight.groundStage == .landingRoll && flight.groundPose == end.touchdown,
+                    "The initial ground position skipped the touchdown point.")
+        flight.applyRecommendedControls()
+        try require(flight.reverseThrust && flight.canUseReverseThrust, "Landing rollout did not allow reverse thrust.")
+        var brakesOnly = flight
+        brakesOnly.reverseThrust = false
+        brakesOnly.advance(by: 1)
+        flight.advance(by: 1)
+        try require(flight.groundSpeedKnots < brakesOnly.groundSpeedKnots,
+                    "Reverse thrust did not affect simulated deceleration.")
+
+        for _ in 0..<240 where flight.groundStage == .landingRoll {
+            flight.applyRecommendedControls()
+            flight.advance(by: 0.25)
+        }
+        try require(flight.groundStage == .taxiIn && !flight.reverseThrust && flight.groundTrack.count > 2,
+                    "Landing did not continue along a passable taxiway exit.")
+        try advance(to: .arrived, flight: &flight)
+        try require(flight.summary?.taxiOutM ?? 0 > 200 && flight.summary?.taxiInM ?? 0 > 200,
+                    "The debrief discarded the simulated taxi distances.")
     }
 
     private static func checkShortRunway() throws {

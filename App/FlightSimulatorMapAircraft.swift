@@ -8,6 +8,7 @@ struct FlightSimulatorAircraftMarker: Equatable {
     let pitch: Double
     let bank: Double
     let gearDown: Bool
+    var flaps: FlightSimulation.Flaps = .retracted
 }
 
 @MainActor
@@ -37,9 +38,11 @@ struct FlightSimulatorMapAircraft: View {
                         content.camera = .virtual
                         content.renderingEffects.motionBlur = .disabled
                         content.add(scene.world)
-                        scene.update(heading: heading, pitch: pitch, bank: bank, gearDown: marker.gearDown, aspect: aspect)
+                        scene.update(heading: heading, pitch: pitch, bank: bank, gearDown: marker.gearDown,
+                                     flaps: marker.flaps, animated: !reduceMotion, aspect: aspect)
                     } update: { _ in
-                        scene.update(heading: heading, pitch: pitch, bank: bank, gearDown: marker.gearDown, aspect: aspect)
+                        scene.update(heading: heading, pitch: pitch, bank: bank, gearDown: marker.gearDown,
+                                     flaps: marker.flaps, animated: !reduceMotion, aspect: aspect)
                     }
                     .id(key)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -79,16 +82,15 @@ private final class FlightMapAircraftScene {
 
     private let camera = PerspectiveCamera()
     private let aircraft: Entity
-    private let gear: Entity
+    private let exterior: FlightAircraftExterior
     private let extent: Float
     private var lastAspect: Float?
     private static let fieldOfView: Float = 36
 
     init(key: Key, profile: AircraftProfile, configuration: AircraftConfiguration, livery: AircraftLivery) {
         self.key = key
-        let model = AircraftModels.makeFlightExterior(aircraft: profile, configuration: configuration, livery: livery)
-        aircraft = model.root
-        gear = model.landingGear
+        exterior = AircraftModels.makeFlightExterior(aircraft: profile, configuration: configuration, livery: livery)
+        aircraft = exterior.root
         extent = Float(max(profile.wingspanM, profile.lengthM))
         camera.camera = PerspectiveCameraComponent(near: 0.1, far: extent * 8,
             fieldOfViewInDegrees: Self.fieldOfView, fieldOfViewOrientation: .vertical)
@@ -98,13 +100,14 @@ private final class FlightMapAircraftScene {
         addLight(at: [4, 3, 5], intensity: 2_150, color: UIColor(red: 0.83, green: 0.94, blue: 1, alpha: 1))
     }
 
-    func update(heading: Double, pitch: Double, bank: Double, gearDown: Bool, aspect: Float) {
+    func update(heading: Double, pitch: Double, bank: Double, gearDown: Bool,
+                flaps: FlightSimulation.Flaps, animated: Bool, aspect: Float) {
         let radians = Float.pi / 180
         let yaw = simd_quatf(angle: -Float(heading + 90) * radians, axis: [0, 1, 0])
         let pitch = simd_quatf(angle: -Float(pitch) * radians, axis: [0, 0, 1])
         let roll = simd_quatf(angle: Float(bank) * radians, axis: [1, 0, 0])
         aircraft.orientation = yaw * pitch * roll
-        gear.isEnabled = gearDown
+        exterior.update(flaps: flaps, gearDown: gearDown, animated: animated)
 
         guard aspect != lastAspect else { return }
         lastAspect = aspect

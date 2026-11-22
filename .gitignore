@@ -16,7 +16,10 @@ xcuserdata/
 !/Build/Checks/
 !/Build/MainlandReview.xcconfig
 !/Build/prepare-mainland-catalog.py
+!/Build/prepare-flight-effects.py
 !/Build/prepare-narration.py
+!/Build/prepare-route-announcements.py
+!/Build/prepare-challenge-announcements.py
 !/Build/update-airport-scheduled-service.py
 !/Build/UITests.xcconfig
 !/Build/UITests/

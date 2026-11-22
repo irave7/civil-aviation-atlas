@@ -15,10 +15,93 @@ enum AircraftModels {
     }
 
     static func makeFlightExterior(aircraft: AircraftProfile, configuration: AircraftConfiguration,
-                                   livery: AircraftLivery) -> (root: Entity, landingGear: Entity) {
+                                   livery: AircraftLivery) -> FlightAircraftExterior {
         let builder = AircraftBuilder(length: Float(aircraft.lengthM), span: Float(aircraft.wingspanM),
                                       configuration: configuration, palette: livery.palette, exteriorOnly: true)
         return builder.buildFlightExterior(variant: AircraftBuilder.Variant(aircraft.id))
+    }
+}
+
+@MainActor
+final class FlightAircraftExterior {
+    static let flapHingeName = "flight-flap-hinge"
+    let root: Entity
+
+    @MainActor
+    private struct MovingPart {
+        let entity: Entity
+        let rest: Transform
+
+        init(_ entity: Entity) {
+            self.entity = entity
+            rest = entity.transform
+        }
+
+        func place(at target: Transform, animated: Bool, duration: TimeInterval) {
+            entity.stopAllAnimations(recursive: false)
+            if animated {
+                entity.move(to: target, relativeTo: entity.parent, duration: duration, timingFunction: .easeInOut)
+            } else {
+                entity.transform = target
+            }
+        }
+    }
+
+    private let flapHinges: [MovingPart]
+    private let gearHinges: [MovingPart]
+    private let flapTravel: Float
+    private var lastFlaps: FlightSimulation.Flaps?
+    private var lastGearDown: Bool?
+    private var wasAnimated = false
+
+    init(root: Entity, flaps: [Entity], landingGear: Entity, length: Float) {
+        self.root = root
+        flapHinges = flaps.map(MovingPart.init)
+        flapTravel = max(0.30, min(1.30, length * 0.018))
+        // Collapse each assembly toward its own upper strut attachment, in place.
+        gearHinges = Array(landingGear.children).map { assembly in
+            let bounds = assembly.visualBounds(relativeTo: landingGear)
+            let pivot = SIMD3(bounds.center.x, bounds.max.y, bounds.center.z)
+            let hinge = Entity()
+            hinge.position = pivot
+            landingGear.addChild(hinge)
+            hinge.addChild(assembly, preservingWorldTransform: true)
+            return MovingPart(hinge)
+        }
+    }
+
+    func update(flaps: FlightSimulation.Flaps, gearDown: Bool, animated: Bool) {
+        let settle = wasAnimated && !animated
+        if lastFlaps != flaps || settle {
+            let angle: Float
+            let extensionFraction: Float
+            switch flaps {
+            case .retracted: (angle, extensionFraction) = (0, 0)
+            case .takeoff: (angle, extensionFraction) = (15, 0.48)
+            case .landing: (angle, extensionFraction) = (36, 1)
+            }
+            let rotation = simd_quatf(angle: -angle * .pi / 180, axis: [0, 0, 1])
+            let travel = extensionFraction * flapTravel
+            for hinge in flapHinges {
+                var target = hinge.rest
+                target.translation += [travel, -travel * 0.20, 0]
+                target.rotation *= rotation
+                hinge.place(at: target, animated: animated && lastFlaps != nil, duration: 0.65)
+            }
+            lastFlaps = flaps
+        }
+        if lastGearDown != gearDown || settle {
+            for hinge in gearHinges {
+                var target = hinge.rest
+                if !gearDown {
+                    target.scale *= 0.015
+                    target.translation.y += 0.20
+                }
+                hinge.place(at: target, animated: animated && lastGearDown != nil, duration: 0.9)
+            }
+            lastGearDown = gearDown
+        }
+        wasAnimated = animated
     }
 }
 
@@ -171,7 +254,7 @@ private struct AircraftBuilder {
                           sourceNote: "按空客公开尺寸和航司公开客舱资料制作的比例模型。客舱、涂装和机械细节为简化示意，测距基于模型几何。", stageGroundY: -5.56)
     }
 
-    func buildFlightExterior(variant: Variant?) -> (root: Entity, landingGear: Entity) {
+    func buildFlightExterior(variant: Variant?) -> FlightAircraftExterior {
         let root = Entity()
         let parts: [AtlasPart]
         let gear: AtlasPart
@@ -186,7 +269,10 @@ private struct AircraftBuilder {
             part.entity.name = part.id
             root.addChild(part.entity)
         }
-        return (root, gear.entity)
+        let flaps = parts.flatMap(\.hierarchy).filter { $0.id.hasSuffix("-flaps") }.compactMap { part in
+            part.entity.children.first { $0.name == FlightAircraftExterior.flapHingeName }
+        }
+        return FlightAircraftExterior(root: root, flaps: flaps, landingGear: gear.entity, length: length)
     }
 
     private func standardParts() -> [AtlasPart] {
@@ -619,6 +705,22 @@ private struct AircraftBuilder {
         return depth * t * surface + depth * sin(f * .pi) * 0.25
     }
 
+    private func addFlap(_ blade: Entity, to group: Entity, from root: Point, toward tip: Point) {
+        guard exteriorOnly else {
+            group.addChild(blade)
+            return
+        }
+        let delta = tip - root
+        let axis = simd_normalize(delta.z < 0 ? -delta : delta)
+        let hinge = Entity()
+        hinge.name = FlightAircraftExterior.flapHingeName
+        hinge.position = (tip + root) * 0.5
+        hinge.orientation = simd_quatf(from: [0, 0, 1], to: axis)
+        group.addChild(hinge)
+        group.addChild(blade)
+        hinge.addChild(blade, preservingWorldTransform: true)
+    }
+
     private func wing(side: Float) -> AtlasPart {
         let entity = Entity()
         let identifier = side < 0 ? "wing-right" : "wing-left"
@@ -640,7 +742,9 @@ private struct AircraftBuilder {
             position(s, f, sign * 1.028) + Point(0, sign * 0.006, 0)
         }))
         let flaps = Entity()
-        flaps.addChild(airfoil(Array(profiles.prefix(5)), range: 0.789...1, finish: controlFinish, position: position))
+        let flapProfiles = Array(profiles.prefix(5))
+        addFlap(airfoil(flapProfiles, range: 0.789...1, finish: controlFinish, position: position),
+                to: flaps, from: position(flapProfiles[0], 0.789, 0), toward: position(flapProfiles[4], 0.789, 0))
         for (x, y, z) in [(36.5 as Float, -1.00 as Float, 8.9 as Float), (40.0, -0.81, 13.7), (44.4, -0.39, 19.1)] {
             let radius: Float = 0.19
             let fairings = [Station(x - 1.8, y, 0.025, 0.025), Station(x - 0.7, y, radius, radius),
@@ -1316,7 +1420,8 @@ private extension AircraftBuilder {
         })
         let flapProfiles = Array(profiles.prefix(5))
         let aileronProfiles = Array(profiles.suffix(3))
-        flaps.addChild(airfoil(flapProfiles, range: 0.798...1, finish: controlFinish, position: wingPosition))
+        addFlap(airfoil(flapProfiles, range: 0.798...1, finish: controlFinish, position: wingPosition),
+                to: flaps, from: wingPosition(flapProfiles[0], 0.798, 0), toward: wingPosition(flapProfiles[4], 0.798, 0))
         for station in flapProfiles.dropFirst().dropLast() {
             let x = station.rear - 0.69
             let y = station.height - 0.31

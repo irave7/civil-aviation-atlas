@@ -58,6 +58,10 @@ struct AirportSiteCatalog: Decodable {
             || buildingCatalog?.airports[airport.id]?.contains(where: isPavement) == true
     }
 
+    static func taxiwayCenterlines(for airport: Airport) -> [AirportSiteFeature] {
+        (bundled?.airports[airport.id] ?? []).filter { $0.kind == .taxiway && !$0.area }
+    }
+
     static func modelDataSources(for airport: Airport) -> [AtlasSource] {
         let original = bundled?.airports[airport.id] ?? []
         let additional = buildingCatalog?.airports[airport.id] ?? []

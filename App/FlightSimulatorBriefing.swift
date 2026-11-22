@@ -16,6 +16,7 @@ struct FlightSimulatorBriefing: View {
     @Binding var destinationRunway: Runway?
     let windLabel: String
     let showWeather: () -> Void
+    let chooseAircraft: () -> Void
     let showImagery: (Airport) -> Void
 
     @Environment(\.colorScheme) private var scheme
@@ -70,6 +71,9 @@ struct FlightSimulatorBriefing: View {
                 .foregroundStyle(palette.ink)
             Text(livery.name)
                 .foregroundStyle(palette.muted)
+            Button("选择模拟机型", systemImage: "airplane", action: chooseAircraft)
+                .buttonStyle(.glass)
+                .accessibilityIdentifier("simulator-briefing-choose-aircraft")
             if usesReferenceAircraft {
                 Text("模拟采用参考机型与涂装。")
                     .font(AtlasTypography.font(.subheadline))
@@ -196,6 +200,7 @@ struct FlightSimulatorDebrief: View {
                 metric("模拟用时", elapsedText)
                 metric("复飞次数", summary.goArounds.formatted())
                 metric("起飞滑跑", value(summary.takeoffRollM, unit: "米"))
+                if summary.taxiOutM > 0 { metric("滑出里程", value(summary.taxiOutM, unit: "米")) }
                 metric("最高海拔", value(summary.peakAltitude, unit: "英尺"))
                 metric("最高空速", value(summary.peakSpeed, unit: "节"))
                 metric("最大倾斜角", value(summary.maxBank, unit: "°"))
@@ -206,6 +211,7 @@ struct FlightSimulatorDebrief: View {
                     metric("接地垂直速度", value(verticalSpeed, unit: "英尺/分"))
                 }
                 metric("着陆滑跑", value(summary.landingRollM, unit: "米"))
+                if summary.taxiInM > 0 { metric("滑入里程", value(summary.taxiInM, unit: "米")) }
             }
             if summary.landingRunwayExceeded {
                 Label("模拟滑跑超出所选跑道长度", systemImage: "exclamationmark.triangle")

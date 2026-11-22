@@ -1,5 +1,4 @@
 import MapKit
-import simd
 import SwiftUI
 import UIKit
 
@@ -10,19 +9,27 @@ struct FlightSimulatorGlobe: View {
     let progress: Double
     var aircraft: FlightSimulatorAircraftMarker? = nil
     var isFlying = false
+    var groundPose: FlightGroundPose? = nil
+    var departureAirStart: FlightGroundPose? = nil
+    var arrivalAirEnd: FlightGroundPose? = nil
+    var groundTrack: [FlightGroundPose] = []
+    var runwayTrack: [FlightGroundPose] = []
+    var isVisible = true
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
-    private var fraction: Double { progress.isFinite ? (1000 * min(1, max(0, progress))).rounded() / 1000 : 0 }
+    private var fraction: Double { progress.isFinite ? min(1, max(0, progress)) : 0 }
 
     var body: some View {
         Group {
             if DistributionPolicy.mapsAvailable, CLLocationCoordinate2DIsValid(origin.coordinate),
                CLLocationCoordinate2DIsValid(destination.coordinate) {
                 FlightSimulatorRouteMap(origin: origin, destination: destination, progress: fraction,
-                                        aircraft: aircraft, isFlying: isFlying)
+                                        aircraft: aircraft, isFlying: isFlying, groundPose: groundPose,
+                                        departureAirStart: departureAirStart, arrivalAirEnd: arrivalAirEnd,
+                                        groundTrack: groundTrack, runwayTrack: runwayTrack, isVisible: isVisible)
                     .equatable()
                     .id(RouteIdentity(origin: origin.id, destination: destination.id))
             } else {
@@ -86,8 +93,13 @@ private struct FlightSimulatorRouteMap: View, Equatable {
     let progress: Double
     let aircraft: FlightSimulatorAircraftMarker?
     let isFlying: Bool
+    let groundPose: FlightGroundPose?
+    let groundTrack: [FlightGroundPose]
+    let runwayTrack: [FlightGroundPose]
+    let isVisible: Bool
+    private let airAnchors: AirAnchors
 
-    @State private var arc: FlightSimulatorArc
+    private let arc: FlightSimulatorArc
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -96,31 +108,102 @@ private struct FlightSimulatorRouteMap: View, Equatable {
     @State private var viewpoint: Viewpoint = .overview
     @State private var viewportSize = CGSize(width: 390, height: 235)
     @State private var projection = FlightSimulatorMapProjection()
-    @State private var visible = true
+    @State private var scrollVisible = true
     @State private var userChoseViewpoint = false
     @State private var lastFollowUpdate: ContinuousClock.Instant?
 
     private enum Viewpoint { case overview, follow, global, free }
 
-    init(origin: Airport, destination: Airport, progress: Double, aircraft: FlightSimulatorAircraftMarker?, isFlying: Bool) {
+    private struct TrackingState: Equatable {
+        let progress: Double
+        let groundPose: FlightGroundPose?
+        let airAnchors: AirAnchors
+        let isFlying: Bool
+    }
+
+    private struct AirAnchors: Equatable {
+        let departure: FlightGroundPose?
+        let arrival: FlightGroundPose?
+
+        func arc(origin: Airport, destination: Airport) -> FlightSimulatorArc {
+            FlightSimulatorArc(origin: coordinate(of: departure) ?? origin.coordinate,
+                               destination: coordinate(of: arrival) ?? destination.coordinate,
+                               departureCourse: departure?.heading, arrivalCourse: arrival?.heading)
+        }
+
+        private func coordinate(of pose: FlightGroundPose?) -> CLLocationCoordinate2D? {
+            guard let coordinate = pose?.coordinate, CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+            return coordinate
+        }
+    }
+
+    init(origin: Airport, destination: Airport, progress: Double, aircraft: FlightSimulatorAircraftMarker?,
+         isFlying: Bool, groundPose: FlightGroundPose?, departureAirStart: FlightGroundPose?, arrivalAirEnd: FlightGroundPose?,
+         groundTrack: [FlightGroundPose], runwayTrack: [FlightGroundPose], isVisible: Bool) {
         self.origin = origin
         self.destination = destination
         self.progress = progress
         self.aircraft = aircraft
         self.isFlying = isFlying
-        let arc = FlightSimulatorArc(origin: origin.coordinate, destination: destination.coordinate)
-        _arc = State(initialValue: arc)
+        self.groundPose = groundPose
+        self.groundTrack = groundTrack
+        self.runwayTrack = runwayTrack
+        self.isVisible = isVisible
+        let anchors = AirAnchors(departure: departureAirStart, arrival: arrivalAirEnd)
+        airAnchors = anchors
+        let arc = anchors.arc(origin: origin, destination: destination)
+        self.arc = arc
         _camera = State(initialValue: FlightSimulatorMapCamera(arc.overviewCamera(aspect: 1.3)))
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.origin == rhs.origin && lhs.destination == rhs.destination && lhs.progress == rhs.progress
             && lhs.aircraft == rhs.aircraft && lhs.isFlying == rhs.isFlying
+            && lhs.groundPose == rhs.groundPose && lhs.airAnchors == rhs.airAnchors
+            && lhs.groundTrack == rhs.groundTrack && lhs.runwayTrack == rhs.runwayTrack && lhs.isVisible == rhs.isVisible
     }
 
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
+    private var mapVisible: Bool { isVisible && scrollVisible }
+    private var trackingState: TrackingState {
+        TrackingState(progress: progress, groundPose: groundPose, airAnchors: airAnchors, isFlying: isFlying)
+    }
 
     var body: some View {
+        mapLayout
+            .onChange(of: trackingState) { previous, next in
+                track(from: previous, to: next)
+            }
+            .onScrollVisibilityChange(threshold: 0.12) { isVisible in
+                scrollVisible = isVisible
+            }
+            .onChange(of: mapVisible) { _, visible in
+                lastFollowUpdate = nil
+                if visible { reframeViewport() }
+            }
+    }
+
+    private func track(from previous: TrackingState, to next: TrackingState) {
+        let endpointsChanged = previous.airAnchors != next.airAnchors
+        let sessionChanged = previous.isFlying != next.isFlying
+        if sessionChanged && !userChoseViewpoint {
+            if next.isFlying && viewpoint == .overview { viewpoint = .follow }
+            else if !next.isFlying && next.progress == 0 && viewpoint == .follow {
+                viewpoint = .overview
+                moveCamera(to: overviewCamera)
+                return
+            }
+        }
+        if endpointsChanged && viewpoint == .overview {
+            moveCamera(to: overviewCamera)
+            return
+        }
+        let groundTransition = (previous.groundPose == nil) != (next.groundPose == nil)
+        let routeEdge = previous.progress != next.progress && (next.progress == 0 || next.progress == 1)
+        updateTrackingCamera(force: endpointsChanged || sessionChanged || groundTransition || routeEdge)
+    }
+
+    private var mapLayout: some View {
         VStack(spacing: 0) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -139,27 +222,12 @@ private struct FlightSimulatorRouteMap: View, Equatable {
 
             mapCanvas
         }
-        .onChange(of: progress) { _, next in
-            updateFollowCamera(force: next == 0 || next == 1)
-        }
-        .onChange(of: isFlying) { _, active in
-            guard !userChoseViewpoint else { return }
-            if active && viewpoint == .overview {
-                viewpoint = .follow
-                updateFollowCamera(force: true)
-            } else if !active && progress == 0 && viewpoint == .follow {
-                viewpoint = .overview
-                moveCamera(to: overviewCamera)
-            }
-        }
-        .onScrollVisibilityChange(threshold: 0.12) { isVisible in
-            visible = isVisible
-            if isVisible { updateFollowCamera(force: true) }
-        }
     }
 
     private var mapCanvas: some View {
-        FlightSimulatorNativeMap(arc: arc, progress: progress, camera: camera) { result in
+        FlightSimulatorNativeMap(arc: arc, progress: progress, groundPose: groundPose, isVisible: mapVisible,
+                                 groundTrack: groundTrack, runwayTrack: runwayTrack,
+                                 origin: origin.coordinate, destination: destination.coordinate, camera: camera) { result in
             projection = result
         } onUserGesture: {
             userChoseViewpoint = true
@@ -171,11 +239,7 @@ private struct FlightSimulatorRouteMap: View, Equatable {
         } action: { size in
             guard size.width > 0, size.height > 0 else { return }
             viewportSize = size
-            switch viewpoint {
-            case .overview: moveCamera(to: overviewCamera, animated: false)
-            case .global: moveCamera(to: arc.globalCamera(aspect: viewportAspect), animated: false)
-            case .follow, .free: break
-            }
+            reframeViewport()
         }
         .accessibilityIdentifier("simulator-globe")
         .overlay {
@@ -270,6 +334,8 @@ private struct FlightSimulatorRouteMap: View, Equatable {
 
     private var viewportAspect: CGFloat { max(0.25, viewportSize.width / max(1, viewportSize.height)) }
 
+    private var globalCamera: MapCamera { arc.globalCamera(aspect: viewportAspect, at: progress) }
+
     private var overviewCamera: MapCamera {
         let markerWidth = aircraftWidth(in: viewportSize)
         let usableWidth = max(viewportSize.width * 0.35, viewportSize.width - markerWidth - 12)
@@ -289,13 +355,13 @@ private struct FlightSimulatorRouteMap: View, Equatable {
             Button("跟随飞机", systemImage: viewpoint == .follow ? "checkmark" : "location.fill") {
                 userChoseViewpoint = true
                 viewpoint = .follow
-                updateFollowCamera(force: true)
+                updateTrackingCamera(force: true)
             }
             .accessibilityIdentifier("simulator-globe-follow")
             Button("全球视角", systemImage: viewpoint == .global ? "checkmark" : "network") {
                 userChoseViewpoint = true
                 viewpoint = .global
-                moveCamera(to: arc.globalCamera(aspect: viewportAspect))
+                moveCamera(to: globalCamera)
             }
             .accessibilityIdentifier("simulator-globe-global")
         } label: {
@@ -319,15 +385,40 @@ private struct FlightSimulatorRouteMap: View, Equatable {
         }
     }
 
-    private func updateFollowCamera(force: Bool) {
-        guard viewpoint == .follow, visible else { return }
+    private func updateTrackingCamera(force: Bool) {
+        guard mapVisible else { return }
+        let target: MapCamera
+        switch viewpoint {
+        case .follow:
+            target = arc.followCamera(at: progress, groundCoordinate: groundPose?.coordinate)
+        case .global:
+            target = globalCamera
+            if !force, FlightSimulatorArc.angularDistance(camera.value.centerCoordinate, target.centerCoordinate) < .pi / 90 {
+                return
+            }
+        case .overview, .free:
+            return
+        }
         let now = ContinuousClock.now
         if !force, let lastFollowUpdate, lastFollowUpdate.duration(to: now) < .milliseconds(600) { return }
         lastFollowUpdate = now
-        moveCamera(to: arc.followCamera(at: progress))
+        moveCamera(to: target)
+    }
+
+    private func reframeViewport() {
+        guard mapVisible else { return }
+        switch viewpoint {
+        case .overview: moveCamera(to: overviewCamera, animated: false)
+        case .global: moveCamera(to: globalCamera, animated: false)
+        case .follow:
+            moveCamera(to: arc.followCamera(at: progress, groundCoordinate: groundPose?.coordinate), animated: false)
+            lastFollowUpdate = ContinuousClock.now
+        case .free: break
+        }
     }
 
     private func moveCamera(to camera: MapCamera, animated: Bool = true) {
+        guard mapVisible, !self.camera.matches(camera) else { return }
         self.camera = FlightSimulatorMapCamera(camera, animated: animated && !reduceMotion)
     }
 }
@@ -346,6 +437,12 @@ private struct FlightSimulatorMapCamera {
         MKMapCamera(lookingAtCenter: value.centerCoordinate, fromDistance: value.distance,
                     pitch: value.pitch, heading: value.heading)
     }
+
+    func matches(_ camera: MapCamera) -> Bool {
+        value.centerCoordinate.latitude == camera.centerCoordinate.latitude
+            && value.centerCoordinate.longitude == camera.centerCoordinate.longitude
+            && value.distance == camera.distance && value.pitch == camera.pitch && value.heading == camera.heading
+    }
 }
 
 private struct FlightSimulatorMapProjection: Equatable {
@@ -359,6 +456,12 @@ private struct FlightSimulatorMapProjection: Equatable {
 private struct FlightSimulatorNativeMap: UIViewRepresentable {
     let arc: FlightSimulatorArc
     let progress: Double
+    let groundPose: FlightGroundPose?
+    let isVisible: Bool
+    let groundTrack: [FlightGroundPose]
+    let runwayTrack: [FlightGroundPose]
+    let origin: CLLocationCoordinate2D
+    let destination: CLLocationCoordinate2D
     let camera: FlightSimulatorMapCamera
     let onProjection: (FlightSimulatorMapProjection) -> Void
     let onUserGesture: () -> Void
@@ -374,12 +477,11 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
         map.isPitchEnabled = true
         map.accessibilityIdentifier = "simulator-globe"
         map.delegate = coordinator
-        coordinator.prepareRoute(on: map)
         coordinator.observeGestures(on: map)
         map.canvasResized = { [weak map, weak coordinator] in
             if let map { coordinator?.project(on: map) }
         }
-        map.setCamera(camera.native, animated: false)
+        coordinator.synchronize(on: map, forceProjection: true, animateCamera: false)
         return map
     }
 
@@ -387,12 +489,13 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
         let coordinator = context.coordinator
         let before = coordinator.parent
         coordinator.parent = self
-        if before.camera.revision != camera.revision {
-            map.setCamera(camera.native, animated: camera.animated)
-            coordinator.project(on: map)
-        } else if before.progress != progress {
-            coordinator.project(on: map)
+        guard isVisible else {
+            if before.isVisible { coordinator.suspendProjection() }
+            return
         }
+        let positionChanged = before.progress != progress || before.groundPose != groundPose
+        coordinator.synchronize(on: map, forceProjection: !before.isVisible || positionChanged,
+                                animateCamera: before.isVisible)
     }
 
     static func dismantleUIView(_ map: Canvas, coordinator: Coordinator) {
@@ -417,20 +520,67 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: FlightSimulatorNativeMap
-        private var routeLine: MKGeodesicPolyline?
+        private var routeLines: [MKPolyline] = []
+        private var routeInk: Set<ObjectIdentifier> = []
+        private var runwayLine: MKPolyline?
+        private var taxiLine: MKPolyline?
         private var queuedProjection: FlightSimulatorMapProjection?
         private var deliveredProjection: FlightSimulatorMapProjection?
         private var hasPendingDelivery = false
+        private var appliedArc: FlightSimulatorArc?
+        private var appliedGroundTrack: [FlightGroundPose] = []
+        private var appliedRunwayTrack: [FlightGroundPose] = []
+        private var appliedCamera: UUID?
         private var active = true
 
         init(parent: FlightSimulatorNativeMap) { self.parent = parent }
 
-        func prepareRoute(on map: MKMapView) {
-            let route = parent.arc.routePoints
-            let outline = MKGeodesicPolyline(coordinates: route, count: route.count)
-            let ink = MKGeodesicPolyline(coordinates: route, count: route.count)
-            routeLine = ink
-            map.addOverlays([outline, ink], level: .aboveLabels)
+        func synchronize(on map: MKMapView, forceProjection: Bool, animateCamera: Bool) {
+            guard active, parent.isVisible else { return }
+            let routeChanged = appliedArc != parent.arc
+            if routeChanged {
+                appliedArc = parent.arc
+                prepareRoute(on: map)
+            }
+            if appliedGroundTrack != parent.groundTrack || appliedRunwayTrack != parent.runwayTrack {
+                appliedGroundTrack = parent.groundTrack
+                appliedRunwayTrack = parent.runwayTrack
+                updateGroundLines(on: map)
+            }
+            let cameraChanged = appliedCamera != parent.camera.revision
+            if cameraChanged {
+                appliedCamera = parent.camera.revision
+                map.setCamera(parent.camera.native, animated: animateCamera && parent.camera.animated)
+            }
+            if forceProjection || routeChanged || cameraChanged { project(on: map) }
+        }
+
+        func suspendProjection() {
+            queuedProjection = nil
+            deliveredProjection = nil
+        }
+
+        private func prepareRoute(on map: MKMapView) {
+            map.removeOverlays(routeLines)
+            let segments = parent.arc.segments()
+            let outlines = segments.map { MKGeodesicPolyline(coordinates: $0, count: $0.count) }
+            let inks = segments.map { MKGeodesicPolyline(coordinates: $0, count: $0.count) }
+            routeInk = Set(inks.map(ObjectIdentifier.init))
+            routeLines = outlines + inks
+            map.addOverlays(routeLines, level: .aboveLabels)
+        }
+
+        private func updateGroundLines(on map: MKMapView) {
+            map.removeOverlays([runwayLine, taxiLine].compactMap { $0 })
+            runwayLine = groundLine(parent.runwayTrack)
+            taxiLine = parent.groundTrack == parent.runwayTrack ? nil : groundLine(parent.groundTrack)
+            map.addOverlays([runwayLine, taxiLine].compactMap { $0 }, level: .aboveLabels)
+        }
+
+        private func groundLine(_ positions: [FlightGroundPose]) -> MKPolyline? {
+            let coordinates = positions.map(\.coordinate)
+            guard coordinates.count > 1 else { return nil }
+            return MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count)
         }
 
         func observeGestures(on map: MKMapView) {
@@ -449,14 +599,26 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
                                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
 
         @objc private func gestureBegan(_ gesture: UIGestureRecognizer) {
-            if gesture.state == .began { parent.onUserGesture() }
+            if parent.isVisible && gesture.state == .began { parent.onUserGesture() }
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: any MKOverlay) -> MKOverlayRenderer {
-            guard let line = overlay as? MKGeodesicPolyline else { return MKOverlayRenderer(overlay: overlay) }
+            guard let line = overlay as? MKPolyline else { return MKOverlayRenderer(overlay: overlay) }
             let renderer = MKPolylineRenderer(polyline: line)
-            renderer.strokeColor = line === routeLine ? .systemMint : UIColor.black.withAlphaComponent(0.65)
-            renderer.lineWidth = line === routeLine ? 2.5 : 5
+            switch line {
+            case _ where line === runwayLine:
+                renderer.strokeColor = .white
+                renderer.lineWidth = 2.6
+            case _ where line === taxiLine:
+                renderer.strokeColor = .systemYellow
+                renderer.lineWidth = 3.2
+            case _ where routeInk.contains(ObjectIdentifier(line)):
+                renderer.strokeColor = .systemMint
+                renderer.lineWidth = 2.5
+            default:
+                renderer.strokeColor = UIColor.black.withAlphaComponent(0.65)
+                renderer.lineWidth = 5
+            }
             renderer.lineCap = .round
             renderer.lineJoin = .round
             return renderer
@@ -467,23 +629,24 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
         func mapViewDidFinishRenderingMap(_ mapView: MKMapView, fullyRendered: Bool) { project(on: mapView) }
 
         func project(on map: MKMapView) {
-            guard active, !map.bounds.isEmpty else { return }
+            guard active, parent.isVisible, !map.bounds.isEmpty else { return }
             let arc = parent.arc
             let fraction = parent.progress
             let camera = map.camera
             let mapCamera = MapCamera(centerCoordinate: camera.centerCoordinate, distance: camera.centerCoordinateDistance,
                                       heading: camera.heading, pitch: camera.pitch)
-            let before = map.convert(arc.coordinate(at: max(0, fraction - 0.002)), toPointTo: map)
-            let after = map.convert(arc.coordinate(at: min(1, fraction + 0.002)), toPointTo: map)
-            var heading = arc.heading(at: fraction) - camera.heading
-            if before.x.isFinite, before.y.isFinite, after.x.isFinite, after.y.isFinite,
-               hypot(after.x - before.x, after.y - before.y) > 0.005 {
-                heading = atan2(after.y - before.y, after.x - before.x) * 180 / .pi + 90
-            }
+            let coordinate = parent.groundPose?.coordinate ?? arc.coordinate(at: fraction)
+            let trueHeading = parent.groundPose?.heading ?? arc.heading(at: fraction)
+            let observer = FlightSimulatorArc.Observer(camera: mapCamera)
+            let aircraft = visiblePoint(for: coordinate, on: map, observer: observer)
+            let heading = aircraft.map {
+                projectedHeading(from: $0, at: coordinate, course: trueHeading,
+                                 on: map, observer: observer, camera: mapCamera)
+            } ?? trueHeading - camera.heading
             let projection = FlightSimulatorMapProjection(
-                origin: visiblePoint(for: arc.routePoints[0], on: map, camera: mapCamera),
-                destination: visiblePoint(for: arc.routePoints[2], on: map, camera: mapCamera),
-                aircraft: visiblePoint(for: arc.coordinate(at: fraction), on: map, camera: mapCamera),
+                origin: visiblePoint(for: parent.origin, on: map, observer: observer),
+                destination: visiblePoint(for: parent.destination, on: map, observer: observer),
+                aircraft: aircraft,
                 heading: (heading * 4).rounded() / 4
             )
             queuedProjection = projection
@@ -492,103 +655,44 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.hasPendingDelivery = false
-                guard self.active, let latest = self.queuedProjection, latest != self.deliveredProjection else { return }
+                guard self.active, self.parent.isVisible, let latest = self.queuedProjection,
+                      latest != self.deliveredProjection else { return }
                 self.deliveredProjection = latest
                 self.parent.onProjection(latest)
             }
         }
 
-        private func visiblePoint(for coordinate: CLLocationCoordinate2D, on map: MKMapView, camera: MapCamera) -> CGPoint? {
-            guard parent.arc.isOnVisibleHemisphere(coordinate, camera: camera) else { return nil }
+        private func projectedHeading(from center: CGPoint, at coordinate: CLLocationCoordinate2D, course: Double,
+                                      on map: MKMapView, observer: FlightSimulatorArc.Observer, camera: MapCamera) -> Double {
+            let distance = max(12, min(26_000, camera.distance * 0.004))
+            let ahead = FlightSimulatorArc.offset(from: coordinate, course: course, meters: distance)
+            let behind = FlightSimulatorArc.offset(from: coordinate, course: course + 180, meters: distance)
+            let limit = max(14, min(map.bounds.width, map.bounds.height) * 0.12)
+
+            func probe(_ coordinate: CLLocationCoordinate2D) -> CGPoint? {
+                guard observer.sees(coordinate) else { return nil }
+                let projected = map.convert(coordinate, toPointTo: map)
+                let separation = hypot(projected.x - center.x, projected.y - center.y)
+                // A projection on another wrapped copy of the globe is never a local tangent sample.
+                return separation.isFinite && separation <= limit ? projected : nil
+            }
+
+            let before = probe(behind) ?? center
+            let after = probe(ahead) ?? center
+            let dx = after.x - before.x
+            let dy = after.y - before.y
+            guard hypot(dx, dy) > 0.02 else { return course - camera.heading }
+            return atan2(dy, dx) * 180 / .pi + 90
+        }
+
+        private func visiblePoint(for coordinate: CLLocationCoordinate2D, on map: MKMapView,
+                                  observer: FlightSimulatorArc.Observer) -> CGPoint? {
+            guard observer.sees(coordinate) else { return nil }
             let point = map.convert(coordinate, toPointTo: map)
             guard map.bounds.contains(point) else { return nil }
             return CGPoint(x: (point.x * 4).rounded() / 4, y: (point.y * 4).rounded() / 4)
         }
 
         func invalidate() { active = false }
-    }
-}
-
-private struct FlightSimulatorArc {
-    private static let earthRadius = 6_371_000.0
-    private let origin: CLLocationCoordinate2D
-    private let destination: CLLocationCoordinate2D
-    private let start: SIMD3<Double>
-    private let direction: SIMD3<Double>
-    private let angle: Double
-    let routePoints: [CLLocationCoordinate2D]
-
-    init(origin: CLLocationCoordinate2D, destination: CLLocationCoordinate2D) {
-        self.origin = origin
-        self.destination = destination
-        let start = Self.vector(origin)
-        let end = Self.vector(destination)
-        let parallel = simd_dot(start, end)
-        let orthogonal = end - start * parallel
-        let length = simd_length(orthogonal)
-        self.start = start
-        angle = atan2(length, parallel)
-        // Antipodal endpoints admit multiple great circles. Pick a stable perpendicular.
-        let axis = abs(start.z) < 0.9 ? SIMD3<Double>(0, 0, 1) : SIMD3<Double>(1, 0, 0)
-        let tangent = length > 1e-12 ? orthogonal / length : simd_normalize(axis - start * simd_dot(start, axis))
-        direction = tangent
-        let midpoint = Self.coordinate(start * cos(angle / 2) + tangent * sin(angle / 2))
-        routePoints = [origin, midpoint, destination]
-    }
-
-    func coordinate(at progress: Double) -> CLLocationCoordinate2D {
-        if progress <= 0 { return origin }
-        if progress >= 1 { return destination }
-        let arc = angle * progress
-        return Self.coordinate(start * cos(arc) + direction * sin(arc))
-    }
-
-    func heading(at progress: Double) -> Double {
-        let coordinate = coordinate(at: progress)
-        let latitude = coordinate.latitude * .pi / 180
-        let longitude = coordinate.longitude * .pi / 180
-        let east = SIMD3<Double>(-sin(longitude), cos(longitude), 0)
-        let north = SIMD3<Double>(-sin(latitude) * cos(longitude), -sin(latitude) * sin(longitude), cos(latitude))
-        let arc = progress * angle
-        let tangent = direction * cos(arc) - start * sin(arc)
-        return atan2(simd_dot(tangent, east), simd_dot(tangent, north)) * 180 / .pi
-    }
-
-    func overviewCamera(aspect: CGFloat, padding: CGFloat = 1) -> MapCamera {
-        let diameter = Self.earthRadius * angle
-        let fit = Double(padding) * max(2.35, 2.35 / Double(max(0.6, aspect)))
-        let horizon = Self.earthRadius * (1 / cos(min(1.46, angle / 2 + 0.08)) - 1)
-        let distance = min(53_000_000, max(24_000, diameter * fit, horizon))
-        return MapCamera(centerCoordinate: routePoints[1], distance: distance)
-    }
-
-    func globalCamera(aspect: CGFloat) -> MapCamera {
-        let fit = max(1, min(1.42, 1.3 / Double(aspect)))
-        return MapCamera(centerCoordinate: routePoints[1], distance: 37_000_000 * fit)
-    }
-
-    func followCamera(at progress: Double) -> MapCamera {
-        let regionalDistance = min(2_200_000, max(24_000, Self.earthRadius * angle * 0.19))
-        let blend = min(1, min(progress, 1 - progress) / 0.10)
-        let smooth = blend * blend * (3 - 2 * blend)
-        return MapCamera(centerCoordinate: coordinate(at: progress), distance: 9_000 + (regionalDistance - 9_000) * smooth,
-                         pitch: 30 * (1 - smooth))
-    }
-
-    func isOnVisibleHemisphere(_ coordinate: CLLocationCoordinate2D, camera: MapCamera) -> Bool {
-        guard camera.distance >= 1_000_000 else { return true }
-        let margin = Self.earthRadius / (Self.earthRadius + camera.distance) - 0.035
-        return simd_dot(Self.vector(coordinate), Self.vector(camera.centerCoordinate)) >= margin
-    }
-
-    private static func vector(_ coordinate: CLLocationCoordinate2D) -> SIMD3<Double> {
-        let latitude = coordinate.latitude * .pi / 180
-        let longitude = coordinate.longitude * .pi / 180
-        return SIMD3(cos(latitude) * cos(longitude), cos(latitude) * sin(longitude), sin(latitude))
-    }
-
-    private static func coordinate(_ point: SIMD3<Double>) -> CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: atan2(point.z, hypot(point.x, point.y)) * 180 / .pi,
-                               longitude: atan2(point.y, point.x) * 180 / .pi)
     }
 }

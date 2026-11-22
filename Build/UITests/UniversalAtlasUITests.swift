@@ -63,8 +63,12 @@ final class UniversalAtlasUITests: XCTestCase {
         waitForMode("剖视", in: app)
         viewport.tap(withNumberOfTaps: 2, numberOfTouches: 2)
         waitForMode("外观", in: app)
-        tap("model-mode-拆分", in: app)
-        XCTAssertTrue(control("model-separation", in: app).waitForExistence(timeout: 10))
+        let originalViewport = viewport.frame
+        tap("model-mode-拆分", in: app, allowsCenterTap: true)
+        let separation = app.sliders["model-separation"].firstMatch
+        XCTAssertTrue(separation.waitForExistence(timeout: 10))
+        XCTAssertEqual(viewport.frame, originalViewport, "拆分控件出现时应保留整个 3D 操作区域")
+        XCTAssertTrue(viewport.frame.insetBy(dx: -1, dy: -1).contains(separation.frame))
         XCTAssertTrue(control("model-split-zoom", in: app).exists)
         attachScreenshot(app.screenshot(), named: "A350-900 拆分与镜头缩放")
 

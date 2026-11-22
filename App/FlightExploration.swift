@@ -13,6 +13,13 @@ private enum ExplorationScope: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ExplorationRouteMode: String, CaseIterable, Identifiable {
+    case custom = "自由航线"
+    case challenge = "航线关卡"
+
+    var id: Self { self }
+}
+
 struct ExplorationLeg: Identifiable {
     let start: Airport
     let end: Airport
@@ -36,22 +43,32 @@ struct ExplorationLeg: Identifiable {
 
 @MainActor
 struct FlightExploration: View {
+    private struct Selection: Identifiable {
+        let leg: ExplorationLeg
+        let challenge: FlightChallenge?
+
+        var id: String { leg.id }
+    }
+
     let library: AtlasLibrary
+    let favorites: AtlasFavorites
     var simulatesFlight = false
     let openAirport: (Airport) -> Void
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @State private var routeMode = ExplorationRouteMode.custom
     @State private var scope = ExplorationScope.mainland
     @State private var originID = "SHA"
     @State private var picksOrigin = false
-    @State private var origins: [Airport] = []
+    @State private var availableOrigins: (scope: ExplorationScope, airports: [Airport])?
     @State private var destinationFilter = ""
-    @State private var activeLeg: ExplorationLeg?
+    @State private var selection: Selection?
 
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
+        let origins = availableOrigins.flatMap { $0.scope == scope ? $0.airports : nil }
         ScrollView {
             VStack(alignment: .leading, spacing: palette.contentGap + 8) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -63,43 +80,28 @@ struct FlightExploration: View {
                         .font(AtlasTypography.font(.subheadline))
                         .foregroundStyle(palette.muted)
                 }
-                Picker("探索范围", selection: $scope) {
-                    ForEach(ExplorationScope.allCases) { item in Text(item.rawValue).tag(item) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("exploration-scope")
-
-                if let origin = library.airport(originID) {
-                    Button {
-                        picksOrigin = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "airplane.departure")
-                                .foregroundStyle(palette.selectionInk)
-                                .font(.title3)
-                                .padding(12)
-                                .background(palette.selection, in: .rect(cornerRadius: 10))
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("出发机场")
-                                    .font(AtlasTypography.font(.caption))
-                                    .foregroundStyle(palette.muted)
-                                Text("\(origin.displayCode) · \(origin.displayName)")
-                                    .font(AtlasTypography.font(.headline))
-                                    .foregroundStyle(palette.ink)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down")
-                                .foregroundStyle(palette.muted)
-                                .accessibilityHidden(true)
-                        }
-                        .padding(palette.isDark ? 13 : 16)
-                        .atlasPanel(palette)
-                        .contentShape(.rect)
+                if simulatesFlight {
+                    Picker("航线模式", selection: $routeMode) {
+                        ForEach(ExplorationRouteMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("exploration-origin")
-                    legsSection(for: origin)
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("exploration-route-mode")
+                }
+
+                if simulatesFlight && routeMode == .challenge {
+                    FlightChallengeBrowser(library: library, openAirport: openAirport) { challenge, leg in
+                        selection = Selection(leg: leg, challenge: challenge)
+                    }
+                } else {
+                    Picker("探索范围", selection: $scope) {
+                        ForEach(ExplorationScope.allCases) { item in Text(item.rawValue).tag(item) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("exploration-scope")
+
+                    let origin = library.airport(originID)
+                    departureButton(for: origin)
+                    if let origin { legsSection(for: origin) }
                 }
             }
             .atlasReadingWidth()
@@ -111,36 +113,72 @@ struct FlightExploration: View {
             let currentScope = scope
             await library.prepareObservedRoutes()
             guard !Task.isCancelled, currentScope == scope else { return }
-            origins = library.airports.filter { hasLegs(from: $0, scope: currentScope) }
+            let origins = library.airports.filter { hasLegs(from: $0, scope: currentScope) }
                 .sorted { $0.displayCode < $1.displayCode }
             if !origins.contains(where: { $0.id == originID }) {
                 originID = currentScope.preferredOrigins.first { id in origins.contains { $0.id == id } }
                     ?? origins.first?.id ?? ""
             }
+            availableOrigins = (currentScope, origins)
         }
         .onChange(of: scope) { _, next in
-            origins = []
             destinationFilter = ""
             if let preferred = next.preferredOrigins.first { originID = preferred }
         }
         .sheet(isPresented: $picksOrigin) {
-            ExplorationOriginPicker(airports: origins, preferred: scope.preferredOrigins) { airport in
+            ExplorationOriginPicker(
+                airports: origins ?? [],
+                preferred: scope.preferredOrigins, favoriteIDs: favorites.airportIDs,
+                selectedID: originID, loading: origins == nil
+            ) { airport in
                 originID = airport.id
                 destinationFilter = ""
                 picksOrigin = false
             }
         }
-        .fullScreenCover(item: $activeLeg) { leg in
+        .fullScreenCover(item: $selection) { active in
             let showAirport: (Airport) -> Void = { airport in
-                activeLeg = nil
+                selection = nil
                 openAirport(airport)
             }
             if simulatesFlight {
-                FlightSimulatorSession(leg: leg, openAirport: showAirport)
+                FlightSimulatorSession(leg: active.leg, favorites: favorites, challenge: active.challenge, openAirport: showAirport)
             } else {
-                FlightExplorationPlayback(leg: leg, openAirport: showAirport)
+                FlightExplorationPlayback(leg: active.leg, openAirport: showAirport)
             }
         }
+    }
+
+    private func departureButton(for origin: Airport?) -> some View {
+        Button {
+            picksOrigin = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "airplane.departure")
+                    .foregroundStyle(palette.selectionInk)
+                    .font(.title3)
+                    .padding(12)
+                    .background(palette.selection, in: .rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("出发机场")
+                        .font(AtlasTypography.font(.caption))
+                        .foregroundStyle(palette.muted)
+                    Text(origin.map { "\($0.displayCode) · \($0.displayName)" } ?? "选择机场")
+                        .font(AtlasTypography.font(.headline))
+                        .foregroundStyle(palette.ink)
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .foregroundStyle(palette.muted)
+                    .accessibilityHidden(true)
+            }
+            .padding(palette.isDark ? 13 : 16)
+            .atlasPanel(palette)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("exploration-origin")
     }
 
     @ViewBuilder
@@ -169,7 +207,7 @@ struct FlightExploration: View {
             LazyVStack(spacing: palette.isDark ? 6 : 9) {
                 ForEach(matches) { leg in
                     Button {
-                        activeLeg = leg
+                        selection = Selection(leg: leg, challenge: nil)
                     } label: {
                         HStack(spacing: 12) {
                             Text(leg.end.displayCode)
@@ -218,6 +256,7 @@ struct FlightExploration: View {
         let otherID = route.origin == origin.id ? route.destination : route.origin
         guard route.hasVerifiedNonstop, (route.distanceKm ?? 0) > 0,
               let end = library.airport(otherID), end.id != origin.id else { return nil }
+        guard !DistributionPolicy.mapsAvailable || (origin.hasCoordinates && end.hasCoordinates) else { return nil }
         let domestic = origin.countryCode == "CN" && end.countryCode == "CN"
         return (scope == .mainland ? domestic : !domestic) ? end : nil
     }
@@ -244,6 +283,9 @@ struct FlightExploration: View {
 private struct ExplorationOriginPicker: View {
     let airports: [Airport]
     let preferred: [String]
+    let favoriteIDs: Set<String>
+    let selectedID: String
+    let loading: Bool
     let select: (Airport) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
@@ -254,23 +296,42 @@ private struct ExplorationOriginPicker: View {
 
     var body: some View {
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let featured = preferred.compactMap { id in airports.first { $0.id == id } }
-        let choices = search.isEmpty ? airports.filter { !preferred.contains($0.id) } : airports.filter { airport in
+        let matches = search.isEmpty ? airports : airports.filter { airport in
             airport.nameSearchTerms.contains { $0.localizedStandardContains(search) }
         }
+        let saved = matches.filter { favoriteIDs.contains($0.id) }
+        let remaining = matches.filter { !favoriteIDs.contains($0.id) }
+        let featured = search.isEmpty ? preferred.compactMap { id in remaining.first { $0.id == id } } : []
+        let featuredIDs = Set(featured.map(\.id))
+        let choices = remaining.filter { !featuredIDs.contains($0.id) }
         NavigationStack {
             List {
-                if search.isEmpty && !featured.isEmpty {
-                    Section("精选出发机场") { ForEach(featured, content: airportButton) }
-                }
-                Section(search.isEmpty ? "全部出发机场" : "搜索结果") {
-                    ForEach(choices, content: airportButton)
+                if loading {
+                    ProgressView("正在载入可用机场")
+                } else if matches.isEmpty {
+                    if search.isEmpty {
+                        ContentUnavailableView("当前范围没有可用的出发机场", systemImage: "airplane.departure")
+                    } else {
+                        ContentUnavailableView.search(text: search)
+                    }
+                } else {
+                    if !saved.isEmpty {
+                        Section("收藏的出发机场") { ForEach(saved, content: airportButton) }
+                    }
+                    if !featured.isEmpty {
+                        Section("精选出发机场") { ForEach(featured, content: airportButton) }
+                    }
+                    if !choices.isEmpty {
+                        Section(search.isEmpty ? "其他出发机场" : "搜索结果") {
+                            ForEach(choices, content: airportButton)
+                        }
+                    }
                 }
             }
             .scrollContentBackground(.hidden)
             .background(palette.page)
             .tint(palette.accent)
-            .searchable(text: $query, prompt: "机场名称或代码")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "机场名称或代码")
             .navigationTitle("选择出发机场")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
@@ -286,10 +347,13 @@ private struct ExplorationOriginPicker: View {
                     .foregroundStyle(palette.accent)
                     .frame(minWidth: 47, alignment: .leading)
                 Text(airport.displayName).foregroundStyle(palette.ink)
+                Spacer(minLength: 6)
+                if airport.id == selectedID { Image(systemName: "checkmark").accessibilityHidden(true) }
             }
         }
         .listRowBackground(palette.surface)
         .accessibilityIdentifier("exploration-origin-\(airport.id)")
+        .accessibilityAddTraits(airport.id == selectedID ? .isSelected : [])
     }
 }
 

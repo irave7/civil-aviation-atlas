@@ -15,27 +15,39 @@ struct AirportImagery: View {
     }
 }
 #else
-private enum AirportImagerySource: String, Identifiable {
-    case apple = "Apple 卫星影像"
-#if MAINLAND_DISTRIBUTION
-    case offline = "影像暂不可用"
-#else
-    case sentinel = "Sentinel-2 历史卫星影像"
-    case offline = "离线机场图"
+private enum AirportImagerySource: Hashable, Identifiable, Sendable {
+    case apple
+    case offline
+#if !MAINLAND_DISTRIBUTION
+    case aerial(AirportAerialProvider)
+    case sentinel
 #endif
 
     var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .apple: "Apple 卫星影像"
+#if MAINLAND_DISTRIBUTION
+        case .offline: "影像暂不可用"
+#else
+        case .aerial(let provider): provider.rawValue
+        case .sentinel: "Sentinel-2 历史卫星影像"
+        case .offline: "离线机场图"
+#endif
+        }
+    }
 
     var symbol: String {
         switch self {
         case .apple: "globe.asia.australia"
 #if !MAINLAND_DISTRIBUTION
+        case .aerial: "camera.aperture"
         case .sentinel: "globe"
 #endif
         case .offline: "map"
         }
     }
-
 }
 
 private enum AirportImageryLoad: Equatable {
@@ -48,6 +60,7 @@ struct AirportImagery: View {
     private let plan: AirportSitePlan
 #endif
     private let siteCamera: MapCamera
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var currentCamera: MapCamera
     @State private var cameraChange = 0
     @State private var lastTilt = 46.0
@@ -73,26 +86,23 @@ struct AirportImagery: View {
 #endif
         siteCamera = initial
         _currentCamera = State(initialValue: initial)
-        _source = State(initialValue: Self.preferredSource(for: airport))
+        _source = State(initialValue: Self.sources(for: airport).first ?? .apple)
     }
 
     private var isTilted: Bool { currentCamera.pitch > 6 }
 
-    private static func preferredSource(for airport: Airport) -> AirportImagerySource {
-#if MAINLAND_DISTRIBUTION
-        .apple
-#else
-        airport.countryCode == "CN" ? .apple : .sentinel
-#endif
-    }
-
-    private var sourceOptions: [AirportImagerySource] {
+    private static func sources(for airport: Airport) -> [AirportImagerySource] {
 #if MAINLAND_DISTRIBUTION
         [.apple, .offline]
 #else
-        airport.countryCode == "CN" ? [.apple, .offline] : [.sentinel, .apple, .offline]
+        if airport.countryCode == "CN" { return [.apple, .offline] }
+        let global: [AirportImagerySource] = [.apple, .sentinel, .offline]
+        if let aerial = AirportAerialProvider.covering(airport) { return [.aerial(aerial)] + global }
+        return global
 #endif
     }
+
+    private var sourceOptions: [AirportImagerySource] { Self.sources(for: airport) }
 
     private var automaticFallback: AirportImagerySource? {
         guard let index = sourceOptions.firstIndex(of: source) else { return nil }
@@ -101,14 +111,16 @@ struct AirportImagery: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            viewport
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            controls
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.bar)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                viewport
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                controls(in: geometry.size)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
+            }
         }
         .background(Color(red: 0.063, green: 0.104, blue: 0.145))
         .colorScheme(.dark)
@@ -176,30 +188,65 @@ struct AirportImagery: View {
         .accessibilityIdentifier("airport-satellite-map")
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(source == .offline ? source.rawValue : "卫星影像") · \(airport.displayCode) · \(airport.displayName)")
-                    .font(AtlasTypography.font(.caption, weight: .semibold))
-                    .lineLimit(2)
-                Text(statusText)
-                    .font(AtlasTypography.font(.caption2))
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("airport-imagery-status")
-#if !MAINLAND_DISTRIBUTION
-                if source == .sentinel {
-                    Link("EOxCloudless — EOX IT Services GmbH", destination: URL(string: "https://cloudless.eox.at/")!)
-                        .foregroundStyle(.mint)
-                    Link("Contains modified Copernicus Sentinel data 2016 & 2017 · CC BY 4.0", destination: URL(string: "https://creativecommons.org/licenses/by/4.0/")!)
-                        .foregroundStyle(.mint)
+    private func controls(in size: CGSize) -> some View {
+        let sideBySide = size.width >= 550 && size.height < 360
+        let layout = sideBySide
+            ? AnyLayout(HStackLayout(alignment: .center, spacing: 14))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        return layout {
+            Group {
+                if typeSize >= .xxxLarge {
+                    ViewThatFits(in: .vertical) {
+                        information.fixedSize(horizontal: false, vertical: true)
+                        ScrollView { information }
+                    }
+                    .frame(maxHeight: min(size.height * 0.38, 170), alignment: .topLeading)
+                } else {
+                    information.fixedSize(horizontal: false, vertical: true)
                 }
-#endif
             }
-            .font(AtlasTypography.font(.caption2))
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             ViewThatFits(in: .horizontal) {
-                buttons(iconOnly: false).fixedSize(horizontal: true, vertical: false)
-                buttons(iconOnly: true)
+                buttons(iconOnly: sideBySide).fixedSize(horizontal: true, vertical: false)
+                buttons(iconOnly: true).fixedSize(horizontal: true, vertical: false)
+                ScrollView(.horizontal) { buttons(iconOnly: true) }
+                    .scrollIndicators(.hidden)
             }
+        }
+    }
+
+    private var information: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(viewportTitle) · \(airport.displayCode) · \(airport.displayName)")
+                .font(AtlasTypography.font(.caption, weight: .semibold))
+#if !MAINLAND_DISTRIBUTION
+            if case .aerial(let provider) = source {
+                let credit = provider.attribution
+                Link(credit.title, destination: credit.url)
+                    .foregroundStyle(.mint)
+                    .accessibilityIdentifier("airport-imagery-provider-credit")
+            } else if source == .sentinel {
+                Link("EOxCloudless — EOX IT Services GmbH", destination: URL(string: "https://cloudless.eox.at/")!)
+                    .foregroundStyle(.mint)
+                Link("Contains modified Copernicus Sentinel data 2016 & 2017 · CC BY 4.0", destination: URL(string: "https://creativecommons.org/licenses/by/4.0/")!)
+                    .foregroundStyle(.mint)
+            }
+#endif
+            Text(statusText)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("airport-imagery-status")
+        }
+        .font(AtlasTypography.font(.caption2))
+    }
+
+    private var viewportTitle: String {
+        switch source {
+        case .offline: source.title
+#if !MAINLAND_DISTRIBUTION
+        case .aerial: "航空正射影像"
+#endif
+        default: "卫星影像"
         }
     }
 
@@ -213,6 +260,11 @@ struct AirportImagery: View {
         case (.offline, _): "离线公开资料 · 可从影像来源菜单重试"
         case (.apple, .partial), (.apple, .limitedDetail): "部分 Apple 影像尚未载入，可切换影像来源"
         case (.apple, .failed): "Apple 影像暂不可用，可切换来源或重试"
+        case (.aerial(let provider), .loading): "正在加载 · \(provider.rawValue)"
+        case (.aerial(let provider), .ready): "\(provider.rawValue) · 实地拍摄，日期随区域变化"
+        case (.aerial(let provider), .limitedDetail): "\(provider.rawValue) · 已超过此来源的原生缩放等级"
+        case (.aerial(let provider), .partial): "\(provider.rawValue) · 部分航空影像尚未载入"
+        case (.aerial, .failed): "此处航空影像暂不可用，可切换到 Apple 卫星影像"
         case (.sentinel, .loading): "正在加载 EOX 历史卫星影像"
         case (.sentinel, .ready): "2016 年 Sentinel-2 区域合成 · 平面影像，机场设施可能已变化"
         case (.sentinel, .limitedDetail): "2016 年历史影像 · 机场参考点附近细节有限，可查看离线图"
@@ -228,21 +280,22 @@ struct AirportImagery: View {
         HStack(spacing: 7) {
 #if !MAINLAND_DISTRIBUTION
             Menu {
-                Button("自动选择卫星影像", systemImage: "arrow.trianglehead.clockwise") {
-                    switchSource(Self.preferredSource(for: airport), automatic: true)
+                Button("自动选择影像", systemImage: "arrow.trianglehead.clockwise") {
+                    switchSource(Self.sources(for: airport).first ?? .apple, automatic: true)
                 }
                 Divider()
                 ForEach(sourceOptions) { item in
                     Button {
                         switchSource(item, automatic: false)
                     } label: {
-                        Label(item.rawValue, systemImage: source == item ? "checkmark" : item.symbol)
+                        Label(item.title, systemImage: source == item ? "checkmark" : item.symbol)
                     }
                 }
             } label: {
                 label("影像来源", symbol: "square.3.layers.3d", iconOnly: iconOnly)
             }
             .buttonStyle(.glass)
+            .accessibilityValue(source.title)
             .accessibilityIdentifier("airport-imagery-source")
 #endif
 
@@ -285,7 +338,11 @@ struct AirportImagery: View {
 
     @ViewBuilder
     private func label(_ title: String, symbol: String, iconOnly: Bool) -> some View {
-        if iconOnly { Label(title, systemImage: symbol).labelStyle(.iconOnly) }
+        if iconOnly {
+            Label(title, systemImage: symbol)
+                .labelStyle(.iconOnly)
+                .font(.system(size: 17))
+        }
         else { Label(title, systemImage: symbol) }
     }
 
@@ -335,6 +392,7 @@ struct AirportImagery: View {
 }
 
 private struct AirportSatelliteMap: UIViewRepresentable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let airport: Airport
     let source: AirportImagerySource
     let camera: MapCamera
@@ -356,10 +414,10 @@ private struct AirportSatelliteMap: UIViewRepresentable {
         case .apple:
             map.preferredConfiguration = MKImageryMapConfiguration(elevationStyle: .realistic)
 #if !MAINLAND_DISTRIBUTION
-        case .sentinel:
+        case .aerial, .sentinel:
             map.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: .flat)
-            let tiles = AirportSentinelTiles(reference: MKMapPoint(airport.coordinate)) { [weak coordinator = context.coordinator] loaded, limitedDetail in
-                Task { @MainActor in coordinator?.archiveTileFinished(loaded: loaded, limitedDetail: limitedDetail) }
+            let tiles = AirportRasterTiles(source: source, reference: MKMapPoint(airport.coordinate)) { [weak coordinator = context.coordinator] result in
+                Task { @MainActor in coordinator?.tileFinished(result) }
             }
             map.addOverlay(tiles, level: .aboveLabels)
 #endif
@@ -380,7 +438,7 @@ private struct AirportSatelliteMap: UIViewRepresentable {
     func updateUIView(_ map: MKMapView, context: Context) {
         let previous = context.coordinator.parent.cameraChange
         context.coordinator.parent = self
-        if previous != cameraChange { map.setCamera(nativeCamera, animated: true) }
+        if previous != cameraChange { map.setCamera(nativeCamera, animated: !reduceMotion) }
     }
 
     private var nativeCamera: MKMapCamera {
@@ -392,8 +450,7 @@ private struct AirportSatelliteMap: UIViewRepresentable {
         var parent: AirportSatelliteMap
         private var latest: AirportImageryLoad = .loading
 #if !MAINLAND_DISTRIBUTION
-        private var receivedArchiveTile = false
-        private var archiveDetailIsLimited = false
+        private var hasReferenceImagery = false
 #endif
 
         init(parent: AirportSatelliteMap) { self.parent = parent }
@@ -433,10 +490,18 @@ private struct AirportSatelliteMap: UIViewRepresentable {
             return marker
         }
 
-        func archiveTileFinished(loaded: Bool, limitedDetail: Bool?) {
-            if loaded { receivedArchiveTile = true }
-            if let limitedDetail { archiveDetailIsLimited = limitedDetail }
-            report(loaded ? (archiveDetailIsLimited ? .limitedDetail : .ready) : (receivedArchiveTile ? .partial : .failed))
+        func tileFinished(_ result: AirportRasterTiles.Outcome) {
+            switch result {
+            case .reference(let overzoomed):
+                hasReferenceImagery = true
+                report(overzoomed ? .limitedDetail : .ready)
+            case .surroundings where !hasReferenceImagery:
+                report(.partial)
+            case .missingReference where !hasReferenceImagery:
+                report(.failed)
+            case .surroundings, .missingReference:
+                break
+            }
         }
 #endif
 
@@ -453,12 +518,19 @@ private struct AirportSatelliteMap: UIViewRepresentable {
 #endif
 
 #if !MAINLAND_DISTRIBUTION
-private final class AirportSentinelTiles: MKTileOverlay, @unchecked Sendable {
-    private static let nativeMaximumZoom = 14
-    private let reference: MKMapPoint
-    private let tileFinished: @Sendable (Bool, Bool?) -> Void
+private final class AirportRasterTiles: MKTileOverlay, @unchecked Sendable {
+    enum Outcome: Sendable {
+        case reference(overzoomed: Bool)
+        case surroundings
+        case missingReference
+    }
 
-    init(reference: MKMapPoint, tileFinished: @escaping @Sendable (Bool, Bool?) -> Void) {
+    private let source: AirportImagerySource
+    private let reference: MKMapPoint
+    private let tileFinished: @Sendable (Outcome) -> Void
+
+    init(source: AirportImagerySource, reference: MKMapPoint, tileFinished: @escaping @Sendable (Outcome) -> Void) {
+        self.source = source
         self.reference = reference
         self.tileFinished = tileFinished
         super.init(urlTemplate: nil)
@@ -472,7 +544,10 @@ private final class AirportSentinelTiles: MKTileOverlay, @unchecked Sendable {
             result(nil, URLError(.badURL))
             return
         }
-        let zoom = min(path.z, Self.nativeMaximumZoom)
+        let nativeZoom: Int
+        if case .aerial(let provider) = source { nativeZoom = provider.nativeMaximumZoom }
+        else { nativeZoom = 14 }
+        let zoom = min(path.z, nativeZoom)
         let divisions = 1 << (path.z - zoom)
         let dimension = 1 << path.z
         let wrappedX = (path.x % dimension + dimension) % dimension
@@ -484,22 +559,38 @@ private final class AirportSentinelTiles: MKTileOverlay, @unchecked Sendable {
         let y = path.y / divisions
         let scale = Double(1 << zoom) / MKMapSize.world.width
         let showsReference = zoom >= 12 && Int(reference.x * scale) == x && Int(reference.y * scale) == y
-        // Only the 2016 layer uses EOX's CC BY 4.0 embedded-viewing terms.
-        let url = URL(string: "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/\(zoom)/\(y)/\(x).jpg")!
+        guard let url = tileURL(z: zoom, x: x, y: y) else {
+            result(nil, URLError(.resourceUnavailable))
+            if showsReference { tileFinished(.missingReference) }
+            return
+        }
         Task.detached(priority: .userInitiated) { [tileFinished] in
             do {
-                let data = try await AirportSentinelRequests.shared.tile(at: url)
+                let data = try await AirportRasterRequests.shared.tile(at: url)
                 guard let image = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(image) > 0 else {
                     throw URLError(.cannotDecodeContentData)
                 }
+                if showsReference && Self.isNearlyUniform(image) == true {
+                    throw URLError(.resourceUnavailable)
+                }
                 let tile = divisions == 1 ? data : Self.crop(image, column: wrappedX % divisions, row: path.y % divisions, divisions: divisions)
-                result(tile, tile == nil ? URLError(.cannotDecodeContentData) : nil)
-                tileFinished(tile != nil, showsReference ? Self.isNearlyUniform(image) : nil)
+                guard let tile else { throw URLError(.cannotDecodeContentData) }
+                result(tile, nil)
+                tileFinished(showsReference ? .reference(overzoomed: divisions > 1) : .surroundings)
             } catch {
                 result(nil, error)
-                tileFinished(false, nil)
+                if showsReference { tileFinished(.missingReference) }
             }
         }
+    }
+
+    private func tileURL(z: Int, x: Int, y: Int) -> URL? {
+        if case .aerial(let provider) = source { return provider.tileURL(z: z, x: x, y: y) }
+        // EOX publishes this historical layer under CC BY 4.0 for embedded viewing.
+        if source == .sentinel {
+            return URL(string: "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/\(z)/\(y)/\(x).jpg")
+        }
+        return nil
     }
 
     private static func crop(_ source: CGImageSource, column: Int, row: Int, divisions: Int) -> Data? {
@@ -533,8 +624,8 @@ private final class AirportSentinelTiles: MKTileOverlay, @unchecked Sendable {
     }
 }
 
-private actor AirportSentinelRequests {
-    static let shared = AirportSentinelRequests()
+private actor AirportRasterRequests {
+    static let shared = AirportRasterRequests()
 
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -548,10 +639,11 @@ private actor AirportSentinelRequests {
 
     func tile(at url: URL) async throws -> Data {
         if let existing = active[url] { return try await existing.value }
-        // A close zoom may show several crops of one native-resolution archive tile.
+        // A close zoom may show several crops of one native-resolution tile.
         let request = Task { [session] in
             let (data, response) = try await session.data(from: url)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200, http.mimeType == "image/jpeg" else {
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  http.mimeType?.hasPrefix("image/") == true, data.count <= 2 * 1024 * 1024 else {
                 throw URLError(.badServerResponse)
             }
             return data

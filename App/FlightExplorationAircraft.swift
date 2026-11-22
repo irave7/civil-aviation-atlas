@@ -10,6 +10,8 @@ struct FlightExplorationAircraft: View {
     let pitch: Double
     var bank: Double = 0
     let gearDown: Bool
+    var flaps: FlightSimulation.Flaps = .retracted
+    var showsBackdrop = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scene: ExplorationAircraftScene?
@@ -24,27 +26,33 @@ struct FlightExplorationAircraft: View {
             let displayedPitch = reduceMotion ? 0 : pitch
             let displayedBank = reduceMotion ? 0 : bank
             ZStack {
-                ExplorationAircraftBackdrop(progress: drift, altitude: sin(.pi * drift))
+                if showsBackdrop {
+                    ExplorationAircraftBackdrop(progress: drift, altitude: sin(.pi * drift))
+                }
                 if let scene, scene.modelKey == modelKey {
                     RealityView { content in
                         content.camera = .virtual
                         content.renderingEffects.motionBlur = .disabled
                         content.add(scene.world)
-                        scene.pose(progress: drift, pitch: displayedPitch, bank: displayedBank, gearDown: gearDown, aspect: aspect)
+                        scene.pose(progress: drift, pitch: displayedPitch, bank: displayedBank, gearDown: gearDown,
+                                   flaps: flaps, animated: !reduceMotion, aspect: aspect)
                     } update: { _ in
-                        scene.pose(progress: drift, pitch: displayedPitch, bank: displayedBank, gearDown: gearDown, aspect: aspect)
+                        scene.pose(progress: drift, pitch: displayedPitch, bank: displayedBank, gearDown: gearDown,
+                                   flaps: flaps, animated: !reduceMotion, aspect: aspect)
                     }
                     .id(modelKey)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ProgressView()
                         .tint(.white)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .clipped()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("三维飞行外观，\(profile.displayName)，\(livery.name)")
-        .accessibilityValue(gearDown ? "起落架放下" : "起落架收起")
+        .accessibilityValue(scene?.modelKey == modelKey ? (gearDown ? "起落架放下" : "起落架收起") : "正在载入三维模型")
         .accessibilityIdentifier("exploration-aircraft-3d")
         .task(id: modelKey) {
             guard scene?.modelKey != modelKey, let cabin = profile.configurations.first else { return }
@@ -52,7 +60,7 @@ struct FlightExplorationAircraft: View {
             guard !Task.isCancelled else { return }
             scene = ExplorationAircraftScene(
                 modelKey: modelKey,
-                model: AircraftModels.make(aircraft: profile, configuration: cabin, livery: livery),
+                model: AircraftModels.makeFlightExterior(aircraft: profile, configuration: cabin, livery: livery),
                 length: Float(profile.lengthM), span: Float(profile.wingspanM)
             )
         }
@@ -67,26 +75,19 @@ private final class ExplorationAircraftScene {
     private let camera = PerspectiveCamera()
     private let aircraft: Entity
     private let target: SIMD3<Float>
-    private let landingGear: Entity?
+    private let exterior: FlightAircraftExterior
     private let length: Float
     private let span: Float
     private var lastAspect: Float?
     private static let fieldOfView: Float = 34
 
-    init(modelKey: String, model: AtlasModel, length: Float, span: Float) {
+    init(modelKey: String, model: FlightAircraftExterior, length: Float, span: Float) {
         self.modelKey = modelKey
         self.length = length
         self.span = span
         aircraft = model.root
-        target = model.overviewTarget
-        let parts = model.parts.flatMap(\.hierarchy)
-        landingGear = parts.first { $0.id == "landing-gear" }?.entity
-        for part in parts {
-            if part.interiorOnly { part.entity.removeFromParent() }
-            part.shell?.isEnabled = true
-            part.interior?.removeFromParent()
-            part.section?.removeFromParent()
-        }
+        target = [0, max(length, span) * 0.014, 0]
+        exterior = model
         camera.camera = PerspectiveCameraComponent(
             near: 0.1, far: max(length, span) * 12, fieldOfViewInDegrees: Self.fieldOfView,
             fieldOfViewOrientation: .vertical
@@ -98,7 +99,8 @@ private final class ExplorationAircraftScene {
         addLight(from: [-2, 5, 5], intensity: 1_650, color: UIColor(red: 0.69, green: 0.96, blue: 1, alpha: 1))
     }
 
-    func pose(progress: Double, pitch: Double, bank: Double, gearDown: Bool, aspect: Float) {
+    func pose(progress: Double, pitch: Double, bank: Double, gearDown: Bool,
+              flaps: FlightSimulation.Flaps, animated: Bool, aspect: Float) {
         let travel = Float(progress)
         let extent = max(length, span)
         aircraft.position = [length * (0.095 - travel * 0.19), extent * sin(.pi * travel) * 0.085, 0]
@@ -106,7 +108,7 @@ private final class ExplorationAircraftScene {
         let bankRadians = Float(bank) * Float.pi / 180
         aircraft.orientation = simd_quatf(angle: -radians, axis: [0, 0, 1])
             * simd_quatf(angle: bankRadians, axis: [1, 0, 0])
-        landingGear?.isEnabled = gearDown
+        exterior.update(flaps: flaps, gearDown: gearDown, animated: animated)
 
         guard lastAspect != aspect else { return }
         lastAspect = aspect

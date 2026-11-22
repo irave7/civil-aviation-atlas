@@ -8,7 +8,7 @@ final class FlightSimulatorUITests: XCTestCase {
     }
 
     func testAidedShanghaiToBeijingKeepsTrackVisibleThroughDebrief() {
-        let app = openShanghaiToBeijing()
+        let app = openShanghaiToBeijing(challenge: true)
 
         #if MAINLAND_DISTRIBUTION && !MAINLAND_APPROVED_MAPS
         let track = control("simulator-progress-track", in: app)
@@ -57,6 +57,9 @@ final class FlightSimulatorUITests: XCTestCase {
         let goArounds = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "复飞次数")).firstMatch
         XCTAssertTrue(goArounds.exists)
+        let result = control("flight-challenge-result", in: app)
+        XCTAssertTrue(result.waitForExistence(timeout: 12))
+        XCTAssertTrue(result.label.contains("航线关卡已完成"))
         screenshot("上海虹桥至北京首都：着陆后飞行记录")
     }
 
@@ -135,7 +138,7 @@ final class FlightSimulatorUITests: XCTestCase {
     }
     #endif
 
-    private func openShanghaiToBeijing() -> XCUIApplication {
+    private func openShanghaiToBeijing(challenge: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         let theme = UIDevice.current.userInterfaceIdiom == .phone ? "light" : "dark"
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN", "-atlas.appearance", theme]
@@ -145,8 +148,15 @@ final class FlightSimulatorUITests: XCTestCase {
         let entry = control("entry-flight-simulator", in: app)
         if !entry.exists { tap(control("atlas-sidebar-toggle", in: app)) }
         tap(entry, scrolling: app.scrollViews.firstMatch)
-        wait(for: control("exploration-origin", in: app), label: "SHA", timeout: 20)
-        tap(control("exploration-route-PEK", in: app), scrolling: app.scrollViews.firstMatch)
+        if challenge {
+            let selector = app.segmentedControls["exploration-route-mode"].firstMatch
+            tap(selector.buttons["航线关卡"].firstMatch)
+            tap(control("flight-challenge-SHA-PEK", in: app), scrolling: app.scrollViews.firstMatch)
+            XCTAssertTrue(control("flight-challenge-briefing", in: app).waitForExistence(timeout: 15))
+        } else {
+            wait(for: control("exploration-origin", in: app), label: "SHA", timeout: 20)
+            tap(control("exploration-route-PEK", in: app), scrolling: app.scrollViews.firstMatch)
+        }
         return app
     }
 

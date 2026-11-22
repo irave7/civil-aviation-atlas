@@ -1,11 +1,11 @@
 # 民航图鉴中国大陆 App Store 发布手册
 
-候选版本为 1.2（8），在现有 `com.aerodromeatlas.ipad` 应用记录下原生支持 iPhone 和 iPad，最低系统为 iOS 26 和 iPadOS 26。本候选版本尚未提交 App Store 审核。以下手续与验证由发布负责人在正式提交前留存结果。
+候选版本为 1.2（11），在现有 `com.aerodromeatlas.ipad` 应用记录下原生支持 iPhone 和 iPad，最低系统为 iOS 26 和 iPadOS 26。本候选版本尚未提交 App Store 审核。以下手续与验证由发布负责人在正式提交前留存结果。
 
 ## 1. 确认提交范围
 
 - `AirportAtlasMainlandReview` scheme 使用 `MainlandReview` 配置。此候选版本提供机场目录和资料、原生航班资料页、收录的历史航线及其来源、客机三维查看和拆分，以及本机收藏。历史最远航线按收录数据及统计期显示，距离按应用内口径说明。首发采用无地图元素的图标。
-- 航线探索属于应用内离线导览。可核对的航司机型使用图鉴客机模型和参考涂装，用户可模拟机头姿态和起落架，语音通过系统朗读固定提示，自定义涂装仅保存在本机。当前时刻查询、航空气象、ADS-B 和机场实景不进入大陆审查功能。按实际交互和商店类别向发布审核方确认出版与其他额外要求。
+- 航线探索属于应用内离线导览。可核对的航司机型使用图鉴客机模型和参考涂装，用户可模拟机头姿态和起落架，三种预制合成语音随包离线播放，播放和选择界面标明 AI 配音。可选系统朗读与自定义涂装均在本机处理。当前时刻查询、航空气象、ADS-B 和机场实景不进入大陆审查功能。按实际交互和商店类别向发布审核方确认出版与其他额外要求。
 - 此配置停用地球、地图、机场实景和场区三维场景，也停用实时航班接口和动态跳转。带精确坐标的目录、跑道和场区布局、高程及机场影像资源由打包配置排除。发布时核对目录、航线、客机模型和涂装的数据来源、授权及归属声明。截图和商店文案应展示此构建可操作的功能。[数据与素材署名](../NOTICE.md)
 - App Store Connect 针对同一 App 的 iOS 平台版本选择一个构建。销售范围调整的是各地区商店的供应情况。发布负责人须确认正式版本的共同功能范围和地区供应安排。同一版本选用本候选构建时，启用的其他地区也收到该构建。[Apple 构建选择](https://developer.apple.com/help/app-store-connect/manage-builds/choose-a-build-to-submit) · [Apple 地区供应范围](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/manage-availability-for-your-app-on-the-app-store/)
 
@@ -26,7 +26,7 @@
 - 使用中国大陆网络在真机检查冷启动、搜索、机场、航线、客机和收藏的实际网络行为。确认收藏持久化和清除、自定义涂装只在设备保存、应用内隐私入口、外部链接的按需跳转，以及归档中的 `PrivacyInfo.xcprivacy`。按最终构建和运营方及第三方处理方式填写 App Store Connect「App 隐私」，其中包括实际保留或可关联的访问、支持资料。当前应用无需注册，无运行时生成式 AI、用户发布内容或设备定位请求。若后续引入在线服务，发布前核对大陆可达性、商业显示和再分发权、接收方及网络日志，按实际处理复核告知、同意及数据出境义务。 [Apple 隐私申报](https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/) · [Apple 隐私清单](https://developer.apple.com/documentation/bundleresources/privacy-manifest-files) · [个人信息保护法](https://www.cac.gov.cn/2021-08/20/c_1631050028355286.htm) · [促进和规范数据跨境流动规定](https://www.cac.gov.cn/2024-03/22/c_1712776611775634.htm)
 - 后续评估 Avinor 官方动态时，按提供者建议评估服务端缓存、查询频率和署名，并确认新的数据链路及其合规要求。香港机场管理局的开放航班资料更新至上一自然日，应继续标明历史数据时间范围。 [Avinor 航班数据说明](https://partner.avinor.no/en/services/flight-data/) · [香港机场管理局开放航班资料](https://data.gov.hk/sc-data/dataset/aahk-team1-flight-info)
 - 若有离线生成或合成的文案、视觉素材或三维内容，记录来源及处理过程并按实际分发职责核对标识要求。新增面向公众的生成、传播或用户发布功能时，重新评估适用义务。 [生成式人工智能服务管理暂行办法](https://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm) · [人工智能生成合成内容标识办法](https://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm)
-- 若把离线航线导览纳入候选版，需用实机验证预置路线示意和固定说明文字的本机系统朗读。导览范围限于应用内置路线，用户无需录入或发布路线，也不需要生成式 AI 服务。按最终交互方式、玩法和商店分类向 Apple 及主管部门核验类别和许可。实际分类涉及中国大陆网络游戏时，按 Apple 中国大陆供应要求提交网络游戏出版物号等材料。 [Apple 中国大陆供应信息](https://developer.apple.com/cn/help/app-store-connect/reference/app-information/app-information/)
+- 若把离线航线导览纳入候选版，需用实机验证预置路线示意、离线预制合成语音和可选的系统朗读。导览范围限于应用内置路线，用户无需录入或发布路线，也不需要生成式 AI 服务。按最终交互方式、玩法和商店分类向 Apple 及主管部门核验类别和许可。实际分类涉及中国大陆网络游戏时，按 Apple 中国大陆供应要求提交网络游戏出版物号等材料。 [Apple 中国大陆供应信息](https://developer.apple.com/cn/help/app-store-connect/reference/app-information/app-information/)
 
 ## 4. 构建、验收并送审
 

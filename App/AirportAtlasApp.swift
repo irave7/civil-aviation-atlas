@@ -3,15 +3,17 @@ import UIKit
 
 @main
 struct AirportAtlasApp: App {
+    @AppStorage("atlas.appearance") private var appearance = AtlasAppearance.system
+
     init() {
         AtlasTypography.prepare()
     }
 
     var body: some Scene {
         WindowGroup {
-            AtlasHome(library: .shared)
+            AtlasHome(library: .shared, appearance: $appearance)
                 .font(AtlasTypography.font(.body))
-                .tint(Color(red: 0.02, green: 0.44, blue: 0.46))
+                .preferredColorScheme(appearance.colorScheme)
         }
     }
 }
@@ -31,16 +33,22 @@ private enum AtlasDestination: Hashable {
 @MainActor
 struct AtlasHome: View {
     let library: AtlasLibrary
+    @Binding var appearance: AtlasAppearance
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorContrast
     @State private var favorites = AtlasFavorites()
     @State private var tabletDestination: AtlasDestination = .globe
     @State private var phonePath: [AtlasDestination] = []
     @State private var showsPhoneDirectory = false
+    @State private var showsAppearance = false
     @State private var query = ""
     @State private var visibility: NavigationSplitViewVisibility = .detailOnly
     @State private var compactColumn: NavigationSplitViewColumn = .detail
     @Environment(\.horizontalSizeClass) private var horizontal
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var resolvedScheme: ColorScheme { appearance.colorScheme ?? colorScheme }
+    private var palette: AtlasPalette { AtlasPalette(resolvedScheme, contrast: colorContrast) }
     private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
     private var destination: AtlasDestination {
         isPhone ? phonePath.last ?? .globe : tabletDestination
@@ -54,6 +62,14 @@ struct AtlasHome: View {
                 tabletApp
             }
         }
+        .environment(\.colorScheme, resolvedScheme)
+        .background(alignment: .topLeading) {
+            AtlasWindowAppearance(selection: appearance)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
+        .background(palette.page.ignoresSafeArea())
+        .tint(palette.accent)
         .task(priority: .utility) { await library.prepareObservedRoutes() }
         .task(priority: .utility) {
             guard DistributionPolicy.airportSiteModelsAvailable, let sample = library.airport("FOC") else { return }
@@ -66,20 +82,29 @@ struct AtlasHome: View {
             GlobeView(library: library, open: { navigate(.airport($0.id)) })
                 .navigationTitle(title(for: .globe))
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(palette.surface, for: .navigationBar)
+                .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+                .toolbarColorScheme(resolvedScheme, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { sidebarButton }
                     ToolbarItem(placement: .principal) {
-                        Text(title(for: .globe))
-                            .font(AtlasTypography.font(.headline))
-                            .foregroundStyle(DistributionPolicy.mapsAvailable ? Color.white : Color.primary)
+                        Text("民航图鉴")
+                            .font(AtlasTypography.font(.headline, weight: .bold))
+                            .foregroundStyle(palette.ink)
                             .accessibilityAddTraits(.isHeader)
                     }
-                    ToolbarItem(placement: .topBarTrailing) { airportDirectoryButton }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        favoritesButton
+                        airportDirectoryButton
+                    }
                 }
                 .navigationDestination(for: AtlasDestination.self) { page in
                     detail(page)
-                        .navigationTitle(title(for: page))
+                        .navigationTitle(phoneTitle(for: page))
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(palette.surface, for: .navigationBar)
+                        .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+                        .toolbarColorScheme(resolvedScheme, for: .navigationBar)
                         .toolbar {
                             ToolbarItem(placement: .topBarTrailing) { sidebarButton }
                         }
@@ -90,13 +115,19 @@ struct AtlasHome: View {
                 sidebar
                     .navigationTitle("民航图鉴")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(palette.surface, for: .navigationBar)
+                    .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+                    .toolbarColorScheme(resolvedScheme, for: .navigationBar)
                     .toolbar {
+                        ToolbarItem(placement: .topBarLeading) { appearanceButton }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("完成") { showsPhoneDirectory = false }
                                 .accessibilityIdentifier("atlas-directory-done")
                         }
                     }
             }
+            .preferredColorScheme(appearance.colorScheme)
+            .sheet(isPresented: $showsAppearance, content: appearanceSheet)
         }
     }
 
@@ -104,6 +135,7 @@ struct AtlasHome: View {
         NavigationSplitView(columnVisibility: $visibility, preferredCompactColumn: $compactColumn) {
             sidebar
                 .navigationTitle("民航图鉴")
+                .toolbarColorScheme(resolvedScheme, for: .navigationBar)
                 .navigationSplitViewColumnWidth(min: 225, ideal: 265, max: 310)
                 .toolbar(removing: .sidebarToggle)
         } detail: {
@@ -116,7 +148,7 @@ struct AtlasHome: View {
                 if destination != .globe {
                     detail(destination)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.background)
+                        .background(palette.page)
                         .transition(.opacity)
                         .zIndex(1)
                 }
@@ -124,22 +156,27 @@ struct AtlasHome: View {
             .navigationTitle(title(for: destination))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(removing: .sidebarToggle)
+            .toolbarBackground(palette.surface, for: .navigationBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+            .toolbarColorScheme(resolvedScheme, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { sidebarButton }
                 ToolbarItem(placement: .principal) {
-                    Text(title(for: destination))
-                        .font(AtlasTypography.font(.headline))
-                        .foregroundStyle(destination == .globe && DistributionPolicy.mapsAvailable ? Color.white : Color.primary)
+                    Text(destination == .globe ? "民航图鉴" : title(for: destination))
+                        .font(AtlasTypography.font(.headline, weight: .bold))
+                        .foregroundStyle(palette.ink)
                         .accessibilityAddTraits(.isHeader)
                 }
                 if destination == .globe {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        favoritesButton
                         airportDirectoryButton
                     }
                 }
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .sheet(isPresented: $showsAppearance, content: appearanceSheet)
     }
 
     private var sidebar: some View {
@@ -151,6 +188,7 @@ struct AtlasHome: View {
                 entry("客机图鉴", symbol: "airplane", target: .fleet, id: "entry-aircraft")
                 entry("航线探索", symbol: "point.topleft.down.to.point.bottomright.curvepath", target: .explore, id: "entry-exploration")
                 entry("隐私与数据", symbol: "hand.raised", target: .privacy, id: "entry-privacy")
+                if !isPhone { appearanceButton }
             } header: {
                 Text("浏览")
             }
@@ -160,11 +198,11 @@ struct AtlasHome: View {
                         HStack(spacing: 8) {
                             Text(airport.displayCode)
                                 .font(AtlasTypography.font(.subheadline).monospaced().weight(.semibold))
-                                .foregroundStyle(.teal)
+                                .foregroundStyle(palette.accent)
                                 .frame(width: 49, alignment: .leading)
                             Text(airport.displayName)
                                 .font(AtlasTypography.font(.subheadline))
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(palette.ink)
                                 .lineLimit(2)
                         }
                     }
@@ -187,6 +225,9 @@ struct AtlasHome: View {
             }
         }
         .modifier(DirectorySearch(query: $query, isPhone: isPhone))
+        .scrollContentBackground(.hidden)
+        .background(palette.page)
+        .foregroundStyle(palette.ink)
     }
 
     private var aircraftShortcuts: [AircraftProfile] {
@@ -328,6 +369,14 @@ struct AtlasHome: View {
         }
     }
 
+    private func phoneTitle(for page: AtlasDestination) -> String {
+        switch page {
+        case .airport(let id): library.airport(id)?.displayCode ?? title(for: page)
+        case .aircraft(let id): library.aircraft(id)?.modelName ?? title(for: page)
+        default: title(for: page)
+        }
+    }
+
     private func navigate(_ next: AtlasDestination) {
         if isPhone {
             if next == .globe {
@@ -355,9 +404,67 @@ struct AtlasHome: View {
         visibility = immersive ? .detailOnly : .all
     }
 
+    private var appearanceButton: some View {
+        Button("外观", systemImage: appearance.symbol) { showsAppearance = true }
+            .accessibilityIdentifier("atlas-appearance")
+            .accessibilityLabel("外观，\(appearance.title)")
+            .accessibilityValue(appearance.title)
+            .listRowBackground(palette.surface)
+    }
+
+    private func appearanceSheet() -> some View {
+        NavigationStack {
+            List(AtlasAppearance.allCases) { option in
+                Button {
+                    appearance = option
+                    showsAppearance = false
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: option.symbol)
+                            .foregroundStyle(palette.accent)
+                            .frame(width: 34)
+                            .accessibilityHidden(true)
+                        Text(option.title)
+                            .foregroundStyle(palette.ink)
+                            .font(AtlasTypography.font(.body, weight: .semibold))
+                        Spacer(minLength: 4)
+                        if appearance == option {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(palette.accent)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .frame(minHeight: 48)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(appearance == option ? palette.selection : palette.surface)
+                .accessibilityIdentifier("atlas-appearance-\(option.rawValue)")
+                .accessibilityAddTraits(appearance == option ? .isSelected : [])
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(palette.page)
+            .navigationTitle("外观")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showsAppearance = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .preferredColorScheme(appearance.colorScheme)
+    }
+
     private var globeButton: some View {
         Button(DistributionPolicy.mapsAvailable ? "返回地球" : "返回机场浏览", systemImage: "globe.asia.australia") { navigate(.globe) }
             .accessibilityIdentifier("return-to-globe")
+    }
+
+    private var favoritesButton: some View {
+        Button("收藏", systemImage: "star") { navigate(.favorites) }
+            .accessibilityIdentifier("globe-favorites")
     }
 
     private var airportDirectoryButton: some View {
@@ -386,13 +493,14 @@ struct AtlasHome: View {
             navigate(target)
         } label: {
             Label(label, systemImage: symbol)
-                .foregroundStyle(isSelected(target) ? Color.teal : Color.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(isSelected(target) ? palette.selectionInk : palette.ink)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(id)
         .accessibilityAddTraits(isSelected(target) ? .isSelected : [])
+        .listRowBackground(isSelected(target) ? palette.selection : palette.surface)
     }
 
     private func isSelected(_ target: AtlasDestination) -> Bool {
@@ -427,6 +535,9 @@ private struct FavoritesHome: View {
     let openAircraft: (AircraftProfile) -> Void
     let browseAirports: () -> Void
     let browseAircraft: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         List {
@@ -434,12 +545,14 @@ private struct FavoritesHome: View {
                 if airports.isEmpty {
                     Button("浏览机场", systemImage: "airplane.arrival", action: browseAirports)
                         .accessibilityIdentifier("favorites-open-airports")
+                        .listRowBackground(palette.surface)
                 }
                 ForEach(airports) { airport in
                     Button { openAirport(airport) } label: {
                         AirportRow(airport: airport)
                     }
                     .buttonStyle(.plain)
+                    .listRowBackground(palette.surface)
                     .accessibilityIdentifier("favorites-airport-\(airport.id)")
                 }
             }
@@ -447,18 +560,19 @@ private struct FavoritesHome: View {
                 if aircraft.isEmpty {
                     Button("浏览客机", systemImage: "airplane", action: browseAircraft)
                         .accessibilityIdentifier("favorites-open-aircraft")
+                        .listRowBackground(palette.surface)
                 }
                 ForEach(aircraft) { profile in
                     Button { openAircraft(profile) } label: {
                         HStack(spacing: 15) {
                             Image(systemName: "airplane")
                                 .font(AtlasTypography.font(.title3))
-                                .foregroundStyle(.teal)
+                                .foregroundStyle(palette.accent)
                                 .frame(width: 61, alignment: .leading)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(profile.displayName).font(AtlasTypography.font(.headline))
-                                Text(profile.title).font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                                Text(profile.title).font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                             }
                             Spacer(minLength: 2)
                             Image(systemName: "chevron.right")
@@ -470,11 +584,15 @@ private struct FavoritesHome: View {
                         .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
+                    .listRowBackground(palette.surface)
                     .accessibilityIdentifier("favorites-aircraft-\(profile.id)")
                 }
             }
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(palette.page)
+        .foregroundStyle(palette.ink)
         .accessibilityIdentifier("favorites-home")
     }
 }
@@ -482,6 +600,9 @@ private struct FavoritesHome: View {
 private struct AirportDirectory: View {
     let library: AtlasLibrary
     let open: (Airport) -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
     @State private var search = ""
     @State private var scope: AirportScope = .all
     @State private var buildingsOnly = false
@@ -547,12 +668,17 @@ private struct AirportDirectory: View {
                     Toggle("有建筑模型", isOn: $buildingsOnly)
                         .accessibilityIdentifier("airport-building-filter")
                 }
-            } footer: {
+            }
+            .listRowBackground(palette.surface)
+            Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("机场索引收录 \(library.airports.count.formatted()) 座机场。支持 IATA、ICAO 代码和中英文关键词。")
                     if scope == .large { Text("大型机场沿用来源目录的规模分类。") }
                 }
+                .font(AtlasTypography.font(.footnote))
+                .foregroundStyle(palette.muted)
             }
+            .listRowBackground(palette.subtle)
             Section {
                 if entries.isEmpty {
                     if searchTerm.isEmpty {
@@ -564,6 +690,7 @@ private struct AirportDirectory: View {
                 ForEach(entries) { airport in
                     Button { open(airport) } label: { AirportRow(airport: airport) }
                         .buttonStyle(.plain)
+                        .listRowBackground(palette.surface)
                         .accessibilityIdentifier("airport-\(airport.id)")
                 }
             } header: {
@@ -572,23 +699,29 @@ private struct AirportDirectory: View {
             }
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(palette.page)
+        .foregroundStyle(palette.ink)
         .scrollDismissesKeyboard(.interactively)
     }
 }
 
 struct AirportRow: View {
     let airport: Airport
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
     @Environment(\.horizontalSizeClass) private var horizontal
 
     var body: some View {
         HStack(spacing: 15) {
             Text(airport.displayCode)
-                .font(.system(.title3, design: .monospaced, weight: .semibold))
-                .foregroundStyle(.teal)
+                .font(palette.readout(.title3))
+                .foregroundStyle(palette.accent)
                 .frame(width: 61, alignment: .leading)
             VStack(alignment: .leading, spacing: 4) {
                 Text(airport.displayName).font(AtlasTypography.font(.title3, weight: .semibold))
-                Text(airport.displayCity).font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                Text(airport.displayCity).font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                 if DistributionPolicy.airportSiteModelsAvailable && horizontal == .compact {
                     coverageBadge
                 }
@@ -602,7 +735,9 @@ struct AirportRow: View {
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, palette.isDark ? 6 : 10)
+        .frame(minHeight: 44)
+        .foregroundStyle(palette.ink)
         .contentShape(.rect)
     }
 
@@ -610,7 +745,7 @@ struct AirportRow: View {
         let coverage = airport.modelLabel
         return Text(coverage)
             .font(AtlasTypography.font(.caption))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(palette.muted)
             .accessibilityLabel("模型覆盖 · \(coverage)")
     }
 }
@@ -630,6 +765,9 @@ private struct FleetDirectory: View {
 
     let aircraft: [AircraftProfile]
     let open: (AircraftProfile) -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
     @State private var query = ""
     @State private var filter = CabinFilter.all
     @FocusState private var searchFocused: Bool
@@ -640,10 +778,13 @@ private struct FleetDirectory: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                Text("按机型探索").font(AtlasTypography.font(.largeTitle).bold())
+            LazyVStack(alignment: .leading, spacing: palette.contentGap) {
+                Text("按机型探索")
+                    .font(AtlasTypography.font(.largeTitle, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                    .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
                     TextField("输入机型或制造商", text: $query)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
@@ -651,7 +792,7 @@ private struct FleetDirectory: View {
                         .accessibilityIdentifier("aircraft-search-field")
                 }
                 .padding(13)
-                .background(.quaternary, in: .rect(cornerRadius: 13))
+                .atlasPanel(palette, radius: 13)
                 Picker("筛选客机", selection: $filter) {
                     ForEach(CabinFilter.allCases) { choice in Text(choice.rawValue).tag(choice) }
                 }
@@ -660,7 +801,7 @@ private struct FleetDirectory: View {
                 .onChange(of: filter) { searchFocused = false }
                 Text("\(results.count.formatted()) 款客机")
                     .font(AtlasTypography.font(.footnote))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
                 if results.isEmpty {
                     ContentUnavailableView("没有匹配的客机", systemImage: "airplane")
                 }
@@ -669,22 +810,22 @@ private struct FleetDirectory: View {
                         HStack(spacing: 20) {
                             Image(systemName: "airplane")
                                 .font(.system(size: 33, weight: .light))
-                                .foregroundStyle(.teal)
+                                .foregroundStyle(palette.accent)
                                 .frame(width: 67)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(profile.displayName).font(AtlasTypography.font(.title3).weight(.semibold)).foregroundStyle(.primary)
+                                Text(profile.displayName).font(AtlasTypography.font(.title3).weight(.semibold)).foregroundStyle(palette.ink)
                                 Text(profile.title)
-                                    .font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                                    .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                                 Text(profile.series)
-                                    .font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                                    .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                             }
                             Spacer()
-                            Image(systemName: "chevron.right").font(AtlasTypography.font(.footnote).weight(.semibold)).foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").font(AtlasTypography.font(.footnote).weight(.semibold)).foregroundStyle(palette.muted)
                         }
-                        .padding(20)
+                        .padding(palette.isDark ? 14 : 20)
                         .frame(maxWidth: .infinity)
-                        .background(.quaternary, in: .rect(cornerRadius: 22))
+                        .atlasPanel(palette)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("aircraft-\(profile.id)")
@@ -692,12 +833,16 @@ private struct FleetDirectory: View {
             }
             .atlasReadingWidth()
         }
+        .background(palette.page)
         .scrollDismissesKeyboard(.interactively)
     }
 }
 
 struct SourceLinks: View {
     let sources: [AtlasSource]
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         if !sources.isEmpty {
@@ -710,7 +855,7 @@ struct SourceLinks: View {
                                 Label(source.title, systemImage: "arrow.up.right.square")
                             }
                             if let note = source.detail {
-                                Text(note).font(AtlasTypography.font(.footnote)).foregroundStyle(.secondary)
+                                Text(note).font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
                             }
                         }
                     }

@@ -72,6 +72,16 @@ mainland = icon == "MainlandAppIcon"
 expected, excluded = (mainland_files, global_files) if mainland else (global_files, mainland_files)
 for filename in expected | common_files:
     assert (app / filename).read_bytes() == (resources / filename).read_bytes(), f"Missing or mismatched resource: {filename}"
+narration_files = {
+    f"narration-{voice}-{cue}.m4a"
+    for voice in ("captain", "guide", "story")
+    for cue in ("departing", "cruise", "approach", "arrived", "rotate", "gearUp", "gearDown")
+}
+for filename in narration_files:
+    source = resources / "Narration" / filename
+    bundled = next((entry / filename for entry in (app, app / "Narration", app / "Resources/Narration")
+                    if (entry / filename).is_file()), None)
+    assert bundled and bundled.read_bytes() == source.read_bytes(), f"Missing or mismatched narration: {filename}"
 for filename in excluded:
     assert not (app / filename).exists(), f"Unexpected distribution resource: {filename}"
 manifest = plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes())

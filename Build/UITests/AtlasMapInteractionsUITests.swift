@@ -11,7 +11,22 @@ final class AtlasMapInteractionsUITests: XCTestCase {
     func testGlobeAirportCategoriesDefaultToTransportAndToggleIndependently() {
         let app = launchAtlas()
         let categories = control("globe-airport-categories", in: app)
+        let routeLayer = control("globe-route-layer", in: app)
+        let reset = control("globe-reset-world", in: app)
+        let world = control("world-globe", in: app)
         waitForValue("运输机场", on: categories)
+        for action in [routeLayer, categories, reset] {
+            XCTAssertTrue(action.exists)
+            XCTAssertGreaterThanOrEqual(action.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44)
+            XCTAssertLessThanOrEqual(action.frame.maxY, world.frame.minY + 1,
+                                     "地球工具栏应在地图上方，避免覆盖机场标记")
+        }
+        waitForValue("已显示", on: routeLayer)
+        tap(routeLayer, in: app)
+        waitForValue("已隐藏", on: routeLayer)
+        tap(routeLayer, in: app)
+        waitForValue("已显示", on: routeLayer)
 
         toggleCategory("globe-show-heliports", label: "直升机场", menu: categories, in: app)
         waitForValue("运输机场、直升机场", on: categories)

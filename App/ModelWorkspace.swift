@@ -30,7 +30,12 @@ struct ModelWorkspace: View {
     let title: String
     let subtitle: String
     let expandsSplitZoom: Bool
+    private let liveryName: String?
+    private let chooseLivery: (() -> Void)?
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var textSize
     @StateObject private var scene: ModelSceneController
     @State private var activePart: String?
     @State private var mode: ModelMode = .exterior
@@ -49,18 +54,24 @@ struct ModelWorkspace: View {
     @State private var azimuth: Float = -0.53
     @State private var elevation: Float = 0.56
     private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    private var palette: AtlasPalette { AtlasPalette(colorScheme, contrast: contrast) }
+    private var hasAdjustments: Bool { mode == .exploded || mode == .xray }
 
     init(
         model: AtlasModel,
         title: String,
         subtitle: String,
         expandsSplitZoom: Bool = false,
-        startsWithPartsVisible: Bool = true
+        startsWithPartsVisible: Bool = true,
+        liveryName: String? = nil,
+        chooseLivery: (() -> Void)? = nil
     ) {
         self.model = model
         self.title = title
         self.subtitle = subtitle
         self.expandsSplitZoom = expandsSplitZoom
+        self.liveryName = liveryName
+        self.chooseLivery = chooseLivery
         _scene = StateObject(wrappedValue: ModelSceneController(model: model, expandsSplitZoom: expandsSplitZoom))
         _showParts = State(initialValue: startsWithPartsVisible)
         _target = State(initialValue: model.overviewTarget)
@@ -88,19 +99,24 @@ struct ModelWorkspace: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let wide = !isPhone && geometry.size.width >= 760
+            let wide = !textSize.isAccessibilitySize && geometry.size.width >= (isPhone ? 680 : 760)
+            let isInspecting = wide && (showParts || hasAdjustments)
             HStack(spacing: 0) {
-                stage(isWide: wide)
-                if showParts && wide {
-                    Divider()
-                    partInspector
-                        .frame(width: 265)
-                        .background(.background)
+                stage(isWide: wide, adjustsInInspector: isInspecting)
+                if isInspecting {
+                    Rectangle()
+                        .fill(palette.line)
+                        .frame(width: 1)
+                        .accessibilityHidden(true)
+                    inspector(showsParts: showParts, showsAdjustments: hasAdjustments,
+                              compact: geometry.size.height < 370)
+                        .accessibilityIdentifier("model-inspector")
+                        .frame(width: min(300, max(220, geometry.size.width * 0.28)))
                 }
             }
             .sheet(isPresented: $partsSheet) {
                 NavigationStack {
-                    partInspector
+                    inspector(showsParts: true, showsAdjustments: false)
                         .navigationTitle("模型部件")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
@@ -115,24 +131,27 @@ struct ModelWorkspace: View {
         }
     }
 
-    private func stage(isWide: Bool) -> some View {
+    private func stage(isWide: Bool, adjustsInInspector: Bool) -> some View {
         GeometryReader { viewport in
             let aspect = Float(viewport.size.width / max(1, viewport.size.height))
             let distanceFit = min(2.6, max(1, 1.16 / max(0.1, aspect)))
-            let shortStage = isPhone && viewport.size.height < 320 && viewport.size.width >= 480
+            let shortStage = isPhone && viewport.size.height < 320 && viewport.size.width >= 400
             let padding = shortStage ? 8.0 : Self.stageControlPadding
             let visibleLift = shortStage ? max(0, (bottomControlsHeight - 42) / 2) : 0
             let centerLift = Float(min(0.16, visibleLift / max(1, viewport.size.height)))
             ZStack {
-                Rectangle().fill(AtlasModelStage.backdrop)
+                Rectangle().fill(palette.isDark
+                    ? LinearGradient(colors: [palette.stage, palette.page], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    : AtlasModelStage.backdrop)
                 renderSurface(distanceFit: distanceFit, controlPadding: padding, centerLift: centerLift)
                 VStack(spacing: 0) {
                     header(isWide: isWide, shortStage: shortStage)
                     Spacer(minLength: 12)
-                    tools(viewportHeight: viewport.size.height, distanceFit: distanceFit, shortStage: shortStage)
+                    tools(viewportHeight: viewport.size.height, distanceFit: distanceFit,
+                          shortStage: shortStage, adjustsInInspector: adjustsInInspector)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
                 }
-                .padding(.horizontal, isWide ? 22 : 14)
+                .padding(.horizontal, isWide && !isPhone ? 22 : 14)
                 .padding(.vertical, padding)
             }
             .clipped()
@@ -233,20 +252,22 @@ struct ModelWorkspace: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(AtlasTypography.font(shortStage ? .headline : isWide ? .title : .title2, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(palette.stageInk)
                     .lineLimit(shortStage ? 1 : 2)
+                    .minimumScaleFactor(shortStage ? 0.82 : 0.9)
                     .accessibilityAddTraits(.isHeader)
                 if !shortStage {
                     Text(subtitle)
                         .font(AtlasTypography.font(isWide ? .subheadline : .footnote, weight: .semibold))
-                        .foregroundStyle(.mint)
+                        .foregroundStyle(palette.stageAccent)
                         .lineLimit(2)
                 }
                 if let part {
                     Label(part.label, systemImage: part.symbol)
                         .font(AtlasTypography.font(.callout, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.90))
+                        .foregroundStyle(palette.stageInk)
                         .lineLimit(shortStage ? 1 : 2)
+                        .minimumScaleFactor(shortStage ? 0.82 : 0.9)
                 }
             }
             .allowsHitTesting(false)
@@ -260,7 +281,7 @@ struct ModelWorkspace: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.glass)
-            .foregroundStyle(.white)
+            .foregroundStyle(palette.stageInk)
             .accessibilityLabel("触控操作")
             .accessibilityIdentifier("model-gesture-help")
             .popover(isPresented: $showGestures, arrowEdge: .top) {
@@ -297,33 +318,35 @@ struct ModelWorkspace: View {
                 }
             }
             .buttonStyle(.glass)
-            .foregroundStyle(.white)
+            .foregroundStyle(palette.stageInk)
             .accessibilityLabel(isWide && showParts ? "隐藏部件" : "显示部件")
             .accessibilityIdentifier("model-parts")
         }
     }
 
-    private func tools(viewportHeight: CGFloat, distanceFit: Float, shortStage: Bool) -> some View {
+    private func tools(
+        viewportHeight: CGFloat, distanceFit: Float, shortStage: Bool, adjustsInInspector: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: shortStage ? 5 : 9) {
             if shortStage {
-                settings
+                stageSettings(adjustsInInspector: adjustsInInspector)
                 HStack(spacing: 6) {
                     modeButtons(labels: false)
-                    if hasSplitZoom { splitPinchControl }
+                    if hasSplitZoom && !adjustsInInspector { splitPinchControl() }
                     Spacer(minLength: 0)
                     actions
                 }
             } else {
                 HStack(spacing: 6) {
-                    if hasSplitZoom {
-                        splitPinchControl
+                    if hasSplitZoom && !adjustsInInspector {
+                        splitPinchControl()
                     } else if model.metersPerUnit > 0 && !measuring && mode != .exploded {
                         ruler(viewportHeight: viewportHeight, distanceFit: distanceFit)
                     }
                     Spacer(minLength: 2)
                     actions
                 }
-                settings
+                stageSettings(adjustsInInspector: adjustsInInspector)
                 if isPhone {
                     ViewThatFits(in: .horizontal) {
                         modeButtons(labels: false, stacked: true)
@@ -350,7 +373,9 @@ struct ModelWorkspace: View {
                 measuring.toggle()
                 measurePoints.removeAll()
             } label: {
-                Label("测距", systemImage: measuring ? "ruler.fill" : "ruler").labelStyle(.iconOnly)
+                Label("测距", systemImage: measuring ? "ruler.fill" : "ruler")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(measuring ? Color.orange : palette.stageInk)
             }
             .buttonStyle(.glass)
             .tint(measuring ? .orange : nil)
@@ -359,20 +384,27 @@ struct ModelWorkspace: View {
         Button {
             elevation = elevation > 1.3 ? 0.56 : 1.45
         } label: {
-            Label("俯视", systemImage: "view.2d").labelStyle(.iconOnly)
+            Label("俯视", systemImage: "view.2d")
+                .labelStyle(.iconOnly)
+                .foregroundStyle(palette.stageInk)
         }
         .buttonStyle(.glass)
+        .tint(nil)
+        .accessibilityIdentifier("model-top-view")
         Button {
             reset()
         } label: {
-            Label("复位", systemImage: "arrow.counterclockwise").labelStyle(.iconOnly)
+            Label("复位", systemImage: "arrow.counterclockwise")
+                .labelStyle(.iconOnly)
+                .foregroundStyle(palette.stageInk)
         }
         .buttonStyle(.glass)
+        .tint(nil)
         .accessibilityIdentifier("model-reset")
     }
 
     @ViewBuilder
-    private var settings: some View {
+    private func stageSettings(adjustsInInspector: Bool) -> some View {
         if measuring {
             Text(measurementText)
                 .font(AtlasTypography.font(.headline).monospacedDigit())
@@ -384,44 +416,55 @@ struct ModelWorkspace: View {
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("model-distance")
         }
-        if hasSplitZoom {
+        if !adjustsInInspector && hasSplitZoom {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
-                    separationControl
-                    splitZoomControl
+                    separationControl()
+                    splitZoomControl()
                 }
                 VStack(alignment: .leading, spacing: 7) {
-                    separationControl
-                    splitZoomControl
+                    separationControl()
+                    splitZoomControl()
                 }
             }
-        } else if mode == .exploded {
-            separationControl
-        } else if mode == .xray {
-            modelSlider("外壳不透明度", symbol: mode.symbol, value: $transparency, interval: 0.05...0.85, id: "model-opacity")
+        } else if !adjustsInInspector && mode == .exploded {
+            separationControl()
+        } else if !adjustsInInspector && mode == .xray {
+            transparencyControl()
         }
     }
 
-    private var splitPinchControl: some View {
+    private func splitPinchControl(inInspector: Bool = false) -> some View {
         Button {
             pinchZoomsInSplit.toggle()
         } label: {
             Label(pinchZoomsInSplit ? "捏合缩放" : "捏合拆分",
                   systemImage: pinchZoomsInSplit ? "arrow.up.left.and.arrow.down.right" : ModelMode.exploded.symbol)
                 .font(AtlasTypography.font(.footnote, weight: .semibold))
+                .frame(maxWidth: inInspector ? .infinity : nil)
+                .frame(minHeight: inInspector ? 30 : nil)
         }
         .buttonStyle(.glass)
+        .tint(inInspector ? palette.accent : palette.stageAccent)
         .accessibilityLabel("双指捏合")
         .accessibilityValue(pinchZoomsInSplit ? "缩放" : "拆分")
         .accessibilityHint("轻点切换缩放与拆分")
         .accessibilityIdentifier("model-split-pinch-mode")
     }
 
-    private var separationControl: some View {
-        modelSlider("拆分程度", symbol: ModelMode.exploded.symbol, value: $separation, interval: 0...1, id: "model-separation")
+    private func separationControl(inInspector: Bool = false) -> some View {
+        modelSlider("拆分程度", symbol: ModelMode.exploded.symbol, value: $separation, interval: 0...1,
+                    id: "model-separation", reading: inInspector ? separation.formatted(.percent.precision(.fractionLength(0))) : nil,
+                    inInspector: inInspector)
     }
 
-    private var splitZoomControl: some View {
+    private func transparencyControl(inInspector: Bool = false) -> some View {
+        modelSlider("外壳不透明度", symbol: ModelMode.xray.symbol, value: $transparency, interval: 0.05...0.85,
+                    id: "model-opacity", reading: inInspector ? transparency.formatted(.percent.precision(.fractionLength(0))) : nil,
+                    inInspector: inInspector)
+    }
+
+    private func splitZoomControl(inInspector: Bool = false) -> some View {
         let limits = distanceLimits(for: .exploded)
         let maximum = Double(limits.upperBound)
         let logarithmicRange = log(maximum / Double(limits.lowerBound))
@@ -430,31 +473,54 @@ struct ModelWorkspace: View {
         } set: { position in
             distance = clampedDistance(Float(maximum * exp(-position * logarithmicRange)))
         }
-        return modelSlider("镜头缩放", symbol: "magnifyingglass", value: scale, interval: 0...1, id: "model-split-zoom", reading: "\(zoomPercent.formatted())%")
+        return modelSlider("镜头缩放", symbol: "magnifyingglass", value: scale, interval: 0...1,
+                           id: "model-split-zoom", reading: "\(zoomPercent.formatted())%", inInspector: inInspector)
     }
 
+    @ViewBuilder
     private func modelSlider(
-        _ title: String, symbol: String, value: Binding<Double>, interval: ClosedRange<Double>, id: String, reading: String? = nil
+        _ title: String, symbol: String, value: Binding<Double>, interval: ClosedRange<Double>, id: String,
+        reading: String? = nil, inInspector: Bool
     ) -> some View {
-        HStack(spacing: 10) {
-            Label(title, systemImage: symbol)
-                .font(AtlasTypography.font(.footnote, weight: .semibold))
-                .fixedSize()
-            Slider(value: value, in: interval)
-                .accessibilityLabel(title)
-                .accessibilityIdentifier(id)
-                .frame(minWidth: 88, maxWidth: 185)
-            if let reading {
-                Text(reading)
-                    .font(AtlasTypography.font(.footnote).monospacedDigit())
-                    .frame(minWidth: 58, alignment: .trailing)
-                    .accessibilityHidden(true)
+        if inInspector {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(title)
+                        .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                    Spacer(minLength: 8)
+                    if let reading {
+                        Text(reading)
+                            .font(palette.readout(.subheadline).monospacedDigit())
+                            .foregroundStyle(palette.accent)
+                            .accessibilityHidden(true)
+                    }
+                }
+                Slider(value: value, in: interval)
+                    .accessibilityLabel(title)
+                    .accessibilityIdentifier(id)
             }
+            .tint(palette.accent)
+        } else {
+            HStack(spacing: 10) {
+                Label(title, systemImage: symbol)
+                    .font(AtlasTypography.font(.footnote, weight: .semibold))
+                    .fixedSize()
+                Slider(value: value, in: interval)
+                    .accessibilityLabel(title)
+                    .accessibilityIdentifier(id)
+                    .frame(minWidth: 88, maxWidth: 185)
+                if let reading {
+                    Text(reading)
+                        .font(AtlasTypography.font(.footnote).monospacedDigit())
+                        .frame(minWidth: 58, alignment: .trailing)
+                        .accessibilityHidden(true)
+                }
+            }
+            .tint(palette.stageAccent)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 5)
+            .glassEffect(in: .capsule)
         }
-        .tint(.mint)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 5)
-        .glassEffect(in: .capsule)
     }
 
     private func ruler(viewportHeight: CGFloat, distanceFit: Float) -> some View {
@@ -475,8 +541,8 @@ struct ModelWorkspace: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .foregroundStyle(.white)
-        .background(.black.opacity(0.64), in: .rect(cornerRadius: 7))
+        .foregroundStyle(palette.stageInk)
+        .background(palette.stage.opacity(0.94), in: .rect(cornerRadius: 7))
         .accessibilityLabel("近似比例尺 \(label)")
         .allowsHitTesting(false)
     }
@@ -504,7 +570,8 @@ struct ModelWorkspace: View {
                     }
                     .buttonStyle(.glass)
                     .font(AtlasTypography.font(.body, weight: .semibold))
-                    .tint(mode == candidate ? .mint : nil)
+                    .tint(mode == candidate ? palette.stageAccent : nil)
+                    .buttonBorderShape(palette.isDark ? .roundedRectangle(radius: 9) : .capsule)
                     .accessibilityLabel(candidate.rawValue)
                     .accessibilityAddTraits(mode == candidate ? .isSelected : [])
                     .accessibilityIdentifier("model-mode-\(candidate.rawValue)")
@@ -513,52 +580,113 @@ struct ModelWorkspace: View {
         }
     }
 
-    private var partInspector: some View {
-        List {
-            Section {
-                Button { select(nil) } label: {
-                    partLabel("完整模型", symbol: "cube.transparent", selected: activePart == nil)
+    private func inspector(showsParts: Bool, showsAdjustments: Bool, compact: Bool = false) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: compact ? 12 : palette.contentGap) {
+                if showsParts {
+                    inspectorHeading("模型部件")
+                    VStack(spacing: 6) {
+                        Button { select(nil) } label: {
+                            partLabel("完整模型", symbol: "cube.transparent", selected: activePart == nil)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("part-overview")
+                        ForEach(partRows(model.parts)) { row in
+                            Button { select(row.id) } label: {
+                                partLabel(row.part.label, symbol: row.part.symbol, selected: activePart == row.id,
+                                          depth: row.depth)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("part-\(row.id)")
+                        }
+                    }
+                    if let part {
+                        VStack(alignment: .leading, spacing: 9) {
+                            inspectorHeading(part.label)
+                            Text(part.detail)
+                                .font(AtlasTypography.font(.subheadline))
+                                .lineSpacing(3)
+                            if let dimensions = part.sizeText {
+                                Label(dimensions, systemImage: "ruler")
+                                    .font(AtlasTypography.font(.subheadline).monospacedDigit())
+                                    .foregroundStyle(palette.accent)
+                            }
+                            Toggle("仅显示此部件", isOn: $isolateSelection)
+                                .font(AtlasTypography.font(.subheadline))
+                                .accessibilityIdentifier("model-isolate")
+                        }
+                    }
+                }
+                if showsParts && showsAdjustments {
+                    Rectangle()
+                        .fill(palette.line)
+                        .frame(height: 1)
+                        .accessibilityHidden(true)
+                }
+                if showsAdjustments {
+                    inspectorAdjustments(compact: compact)
+                }
+                if showsParts {
+                    VStack(alignment: .leading, spacing: 7) {
+                        inspectorHeading("模型资料")
+                        Text(model.sourceNote)
+                            .font(AtlasTypography.font(.subheadline))
+                            .foregroundStyle(palette.muted)
+                            .lineSpacing(3)
+                    }
+                }
+            }
+            .padding(compact ? 10 : palette.isDark ? 14 : 17)
+        }
+        .background(palette.surface)
+        .foregroundStyle(palette.ink)
+        .tint(palette.accent)
+    }
+
+    private func inspectorHeading(_ title: String) -> some View {
+        Text(title)
+            .font(AtlasTypography.font(.headline, weight: .bold))
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func inspectorAdjustments(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : palette.isDark ? 9 : 12) {
+            inspectorHeading(mode == .exploded ? (liveryName == nil ? "拆分设置" : "涂装与拆分") : "透视设置")
+            if let liveryName, let chooseLivery {
+                if !compact {
+                    Text("当前涂装")
+                        .font(AtlasTypography.font(.footnote, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                }
+                Button(action: chooseLivery) {
+                    HStack(spacing: 8) {
+                        Text(liveryName)
+                            .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(palette.selectionInk)
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 44)
+                    .background(palette.selection, in: .rect(cornerRadius: palette.corner))
+                    .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier("part-overview")
-                ForEach(partRows(model.parts)) { row in
-                    Button { select(row.id) } label: {
-                        partLabel(row.part.label, symbol: row.part.symbol, selected: activePart == row.id)
-                            .padding(.leading, CGFloat(row.depth * 17))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("part-\(row.id)")
-                }
-            } header: {
-                Text("部件")
-                    .font(AtlasTypography.font(.footnote, weight: .semibold))
+                .accessibilityLabel("更换涂装")
+                .accessibilityValue(liveryName)
+                .accessibilityIdentifier("model-inspector-livery")
             }
-            if let part {
-                Section {
-                    Text(part.detail)
-                        .font(AtlasTypography.font(.body))
-                        .lineSpacing(3)
-                    if let dimensions = part.sizeText {
-                        Label(dimensions, systemImage: "ruler")
-                            .font(AtlasTypography.font(.subheadline).monospacedDigit())
-                    }
-                    Toggle("仅显示此部件", isOn: $isolateSelection)
-                        .font(AtlasTypography.font(.subheadline))
-                        .accessibilityIdentifier("model-isolate")
-                } header: {
-                    Text(part.label)
-                        .font(AtlasTypography.font(.footnote, weight: .semibold))
+            if mode == .exploded {
+                separationControl(inInspector: true)
+                if hasSplitZoom {
+                    splitZoomControl(inInspector: true)
+                    splitPinchControl(inInspector: true)
                 }
-            }
-            Section("模型资料") {
-                Text(model.sourceNote)
-                    .font(AtlasTypography.font(.subheadline))
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
+            } else if mode == .xray {
+                transparencyControl(inInspector: true)
             }
         }
-        .listStyle(.insetGrouped)
-        .environment(\.defaultMinListRowHeight, 44)
     }
 
     private struct PartRow: Identifiable {
@@ -577,25 +705,32 @@ struct ModelWorkspace: View {
         }
     }
 
-    private func partLabel(_ label: String, symbol: String, selected: Bool) -> some View {
-        HStack(spacing: 10) {
+    private func partLabel(_ label: String, symbol: String, selected: Bool, depth: Int = 0) -> some View {
+        HStack(spacing: 9) {
             Image(systemName: symbol)
                 .font(AtlasTypography.font(.subheadline, weight: .semibold))
-                .foregroundStyle(selected ? Color.teal : Color.secondary)
-                .frame(width: 23)
+                .foregroundStyle(selected ? palette.selectionInk : palette.muted)
+                .frame(width: 20)
                 .accessibilityHidden(true)
             Text(label)
                 .font(AtlasTypography.font(.body, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.teal : Color.primary)
-            Spacer()
-            if selected {
-                Image(systemName: "checkmark")
-                    .font(AtlasTypography.font(.caption, weight: .semibold))
-                    .foregroundStyle(.teal)
-                    .accessibilityHidden(true)
-            }
+                .foregroundStyle(selected ? palette.selectionInk : palette.ink)
+            Spacer(minLength: 2)
+            Image(systemName: selected ? "checkmark" : "chevron.forward")
+                .font(AtlasTypography.font(.caption, weight: .semibold))
+                .foregroundStyle(selected ? palette.selectionInk : palette.muted)
+                .accessibilityHidden(true)
         }
+        .padding(.leading, CGFloat(depth * 14) + 10)
+        .padding(.trailing, 10)
         .padding(.vertical, 6)
+        .frame(minHeight: 44)
+        .background(selected ? palette.selection : palette.subtle, in: .rect(cornerRadius: palette.corner))
+        .overlay {
+            RoundedRectangle(cornerRadius: palette.corner)
+                .strokeBorder(selected ? Color.clear : palette.line)
+                .allowsHitTesting(false)
+        }
         .contentShape(.rect)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

@@ -1,5 +1,6 @@
 import MapKit
 import SwiftUI
+import UIKit
 
 extension Airport {
     var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lon) }
@@ -9,52 +10,49 @@ extension Airport {
 struct GlobeView: View {
     let library: AtlasLibrary
     let open: (Airport) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var palette: AtlasPalette { AtlasPalette(colorScheme, contrast: contrast) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: palette.isDark ? 16 : 24) {
+                VStack(alignment: .leading, spacing: 7) {
                     Text("探索机场")
                         .font(AtlasTypography.font(.largeTitle, weight: .bold))
+                        .foregroundStyle(palette.ink)
                         .accessibilityAddTraits(.isHeader)
-                    Text("从机场目录查找机场，或选择下方机场查看资料。")
-                        .foregroundStyle(.secondary)
+                    Text("从精选机场开始，或在目录中查找机场与航线。")
+                        .font(AtlasTypography.font(.body))
+                        .foregroundStyle(palette.muted)
                 }
-                ForEach(library.featured) { airport in
-                    Button { open(airport) } label: {
-                        HStack(spacing: 13) {
-                            Image(systemName: "airplane.arrival")
-                                .foregroundStyle(.teal)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(airport.displayName)
-                                    .font(AtlasTypography.font(.headline))
-                                Text(airport.displayCode)
-                                    .font(.system(.subheadline, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                if let first = library.featured.first {
+                    GlobeAirportBrief(airport: first, palette: palette, open: open)
+                }
+                if !library.featured.dropFirst().isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(library.featured.dropFirst()) { airport in
+                            GlobeCompactAirport(airport: airport, palette: palette, open: open)
+                            if airport.id != library.featured.last?.id {
+                                Rectangle().fill(palette.line).frame(height: 1)
                             }
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.right")
-                                .foregroundStyle(.secondary)
-                                .accessibilityHidden(true)
                         }
-                        .padding(15)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary, in: .rect(cornerRadius: 14))
-                        .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("globe-featured-\(airport.id)")
+                    .clipShape(.rect(cornerRadius: palette.corner))
+                    .overlay { RoundedRectangle(cornerRadius: palette.corner).strokeBorder(palette.line).allowsHitTesting(false) }
                 }
                 if let number = DistributionPolicy.icpRecordNumber {
                     Link("APP 备案号 \(number)", destination: DistributionPolicy.icpLookupURL)
-                        .font(.footnote)
+                        .font(AtlasTypography.font(.footnote))
+                        .tint(palette.accent)
                 }
             }
-            .frame(maxWidth: 570, alignment: .leading)
+            .frame(maxWidth: 640, alignment: .leading)
             .padding(24)
             .frame(maxWidth: .infinity)
         }
+        .background(palette.page)
         .accessibilityIdentifier("mainland-airport-browse")
     }
 }
@@ -101,7 +99,12 @@ private enum GlobeAirportCategory {
 struct GlobeView: View {
     let library: AtlasLibrary
     let open: (Airport) -> Void
-    @State private var position = Self.worldCamera
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var worldDistance = Self.standardWorldDistance
+    @State private var position = Self.worldCamera(distance: Self.standardWorldDistance)
 #if !MAINLAND_DISTRIBUTION
     @State private var visibleRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 24, longitude: 115),
@@ -115,8 +118,12 @@ struct GlobeView: View {
 #endif
     @Namespace private var mapScope
 
-    private static var worldCamera: MapCameraPosition {
-        .camera(MapCamera(centerCoordinate: CLLocationCoordinate2D(latitude: 24, longitude: 115), distance: 31_000_000))
+    private var palette: AtlasPalette { AtlasPalette(colorScheme, contrast: contrast) }
+
+    private static let standardWorldDistance = 31_000_000.0
+
+    private static func worldCamera(distance: Double) -> MapCameraPosition {
+        .camera(MapCamera(centerCoordinate: CLLocationCoordinate2D(latitude: 24, longitude: 115), distance: distance))
     }
 
 #if !MAINLAND_DISTRIBUTION
@@ -172,6 +179,61 @@ struct GlobeView: View {
 #endif
 
     var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let wide = UIDevice.current.userInterfaceIdiom == .pad && !typeSize.isAccessibilitySize
+                && size.width >= 730 && size.width >= size.height
+            let railWidth = min(278, max(218, size.width * 0.25))
+
+            HStack(spacing: 0) {
+                if wide && !palette.isDark {
+                    featuredRail(width: railWidth, border: .trailing)
+                }
+                VStack(spacing: 0) {
+                    mapToolbar(iconOnly: size.width < 350 || typeSize.isAccessibilitySize)
+                    map
+                        .environment(\.colorScheme, .dark)
+                        .background(palette.stage)
+                        .onGeometryChange(for: Bool.self) { geometry in
+                            geometry.size.height > geometry.size.width * 1.4
+                        } action: { isNarrowPortrait in
+                            fitWorld(isNarrowPortrait: isNarrowPortrait)
+                        }
+                    if !wide, let featured = library.featured.first {
+                        Rectangle().fill(palette.line).frame(height: 1)
+                        GlobeCompactAirport(airport: featured, palette: palette, open: open)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if wide && palette.isDark {
+                    featuredRail(width: railWidth, border: .leading)
+                }
+            }
+        }
+        .background(palette.page)
+    }
+
+    @ViewBuilder
+    private func featuredRail(width: CGFloat, border: Alignment) -> some View {
+        if let airport = library.featured.first {
+            GeometryReader { geometry in
+                let inset: CGFloat = palette.isDark ? 15 : 19
+                ScrollView {
+                    GlobeAirportBrief(airport: airport, palette: palette, open: open,
+                                      minimumHeight: max(0, geometry.size.height - 2 * inset))
+                        .padding(inset)
+                }
+                .accessibilityIdentifier("globe-featured-rail")
+            }
+            .frame(width: width)
+            .background(palette.subtle)
+            .overlay(alignment: border) {
+                Rectangle().fill(palette.line).frame(width: 1).allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var map: some View {
 #if MAINLAND_DISTRIBUTION
         Map(position: $position, scope: mapScope)
             .mapStyle(.standard(elevation: .flat))
@@ -181,11 +243,6 @@ struct GlobeView: View {
             }
             .mapScope(mapScope)
             .accessibilityIdentifier("world-globe")
-            .overlay(alignment: .topLeading) {
-                GlobeControls(featured: library.featured, reset: reset, open: open)
-                    .padding(.leading, 16)
-                    .padding(.top, 16)
-            }
 #else
         Map(position: $position, selection: $selection, scope: mapScope) {
             ForEach(mapRoutes, id: \.0) { _, origin, destination in
@@ -211,19 +268,84 @@ struct GlobeView: View {
             isLocalView = context.camera.distance < 1_250_000
         }
         .accessibilityIdentifier("world-globe")
-        .overlay(alignment: .bottomLeading) {
-            GlobeControls(
-                featured: library.featured, routeLayer: $routeLayer, showsHeliports: $showsHeliports,
-                showsOtherAirports: $showsOtherAirports, reset: reset, open: open
-            )
-                .padding(.leading, 16)
-                .padding(.bottom, 44)
-        }
 #endif
     }
 
+    private func mapToolbar(iconOnly: Bool) -> some View {
+        HStack(spacing: 8) {
+#if !MAINLAND_DISTRIBUTION
+            Button {
+                routeLayer.toggle()
+            } label: {
+                mapControlLabel("航线", systemImage: routeLayer ? "point.topleft.down.to.point.bottomright.curvepath.fill"
+                                                              : "point.topleft.down.to.point.bottomright.curvepath",
+                                iconOnly: iconOnly)
+            }
+            .buttonStyle(.glass)
+            .accessibilityValue(routeLayer ? "已显示" : "已隐藏")
+            .accessibilityAddTraits(routeLayer ? .isSelected : [])
+            .accessibilityIdentifier("globe-route-layer")
+
+            Menu {
+                Toggle("直升机场", systemImage: "helicopter", isOn: $showsHeliports)
+                    .accessibilityIdentifier("globe-show-heliports")
+                Toggle("其他机场", systemImage: "mappin", isOn: $showsOtherAirports)
+                    .accessibilityIdentifier("globe-show-other-airports")
+            } label: {
+                mapControlLabel("机场类型", systemImage: showsHeliports || showsOtherAirports
+                                ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
+                                iconOnly: iconOnly)
+            }
+            .buttonStyle(.glass)
+            .accessibilityValue(airportCategoriesLabel)
+            .accessibilityIdentifier("globe-airport-categories")
+#endif
+            Spacer(minLength: 0)
+            Button(action: reset) {
+                mapControlLabel("全球", systemImage: "globe", iconOnly: iconOnly)
+            }
+            .buttonStyle(.glass)
+            .accessibilityLabel("返回全球")
+            .accessibilityIdentifier("globe-reset-world")
+        }
+        .font(AtlasTypography.font(.subheadline, weight: .semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(palette.surface)
+        .tint(palette.accent)
+    }
+
+    private func mapControlLabel(_ title: LocalizedStringKey, systemImage: String, iconOnly: Bool) -> some View {
+        let label = Label(title, systemImage: systemImage)
+        return Group {
+            if iconOnly { label.labelStyle(.iconOnly) }
+            else { label.labelStyle(.titleAndIcon) }
+        }
+        .frame(minWidth: 44, minHeight: 44)
+    }
+
+#if !MAINLAND_DISTRIBUTION
+    private var airportCategoriesLabel: String {
+        var categories = ["运输机场"]
+        if showsHeliports { categories.append("直升机场") }
+        if showsOtherAirports { categories.append("其他机场") }
+        return categories.joined(separator: "、")
+    }
+#endif
+
+    private func fitWorld(isNarrowPortrait: Bool) {
+        let distance = isNarrowPortrait ? 52_000_000.0 : Self.standardWorldDistance
+        guard worldDistance != distance else { return }
+        worldDistance = distance
+        if !position.positionedByUser {
+            position = Self.worldCamera(distance: distance)
+        }
+    }
+
     private func reset() {
-        withAnimation(.easeInOut(duration: 0.8)) { position = Self.worldCamera }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.8)) {
+            position = Self.worldCamera(distance: worldDistance)
+        }
     }
 
 #if !MAINLAND_DISTRIBUTION
@@ -235,60 +357,95 @@ struct GlobeView: View {
 #endif
 }
 
-private struct GlobeControls: View {
-    let featured: [Airport]
-#if !MAINLAND_DISTRIBUTION
-    @Binding var routeLayer: Bool
-    @Binding var showsHeliports: Bool
-    @Binding var showsOtherAirports: Bool
-
-    private var airportCategoriesLabel: String {
-        var categories = ["运输机场"]
-        if showsHeliports { categories.append("直升机场") }
-        if showsOtherAirports { categories.append("其他机场") }
-        return categories.joined(separator: "、")
-    }
 #endif
-    let reset: () -> Void
+
+private struct GlobeAirportBrief: View {
+    let airport: Airport
+    let palette: AtlasPalette
+    let open: (Airport) -> Void
+    var minimumHeight: CGFloat? = nil
+    @ScaledMetric(relativeTo: .largeTitle) private var codeSize = 45.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: palette.isDark ? 10 : 13) {
+            Text("精选机场")
+                .font(AtlasTypography.font(.footnote, weight: .semibold))
+                .foregroundStyle(palette.muted)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(airport.displayCode)
+                    .font(.system(size: codeSize, weight: .bold, design: palette.isDark ? .monospaced : .default))
+                    .foregroundStyle(palette.ink)
+                Text(airport.displayName)
+                    .font(AtlasTypography.font(.title3, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                Text(metadata)
+                    .font(AtlasTypography.font(.subheadline))
+                    .foregroundStyle(palette.muted)
+            }
+            .accessibilityElement(children: .combine)
+            Rectangle().fill(palette.line).frame(height: 1)
+            if DistributionPolicy.mapsAvailable {
+                Text("点按地球上的机场标记可直接打开机场。")
+                    .font(AtlasTypography.font(.subheadline))
+                    .foregroundStyle(palette.muted)
+            }
+            if minimumHeight != nil { Spacer(minLength: 10) }
+            Button {
+                open(airport)
+            } label: {
+                Label(DistributionPolicy.airportSiteModelsAvailable ? "打开三维模型" : "查看机场资料",
+                      systemImage: DistributionPolicy.airportSiteModelsAvailable ? "cube" : "arrow.up.right")
+                    .font(AtlasTypography.font(.subheadline, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .foregroundStyle(palette.onAccent)
+                    .background(palette.accent, in: .rect(cornerRadius: palette.isDark ? 10 : 22))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(airport.displayName)
+            .accessibilityIdentifier("globe-featured-\(airport.id)")
+        }
+        .padding(palette.isDark ? 13 : 17)
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
+        .atlasPanel(palette)
+    }
+
+    private var metadata: String {
+        [airport.displayCity, airport.icao].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+private struct GlobeCompactAirport: View {
+    let airport: Airport
+    let palette: AtlasPalette
     let open: (Airport) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            if let airport = featured.first {
-                Button { open(airport) } label: {
-                    Label("\(airport.displayCode) · \(airport.displayName)", systemImage: "cube")
-                }
-                .buttonStyle(.glassProminent)
-                .accessibilityIdentifier("globe-featured-\(airport.id)")
+        Button {
+            open(airport)
+        } label: {
+            HStack(spacing: 12) {
+                Text(airport.displayCode)
+                    .font(AtlasTypography.font(.headline, design: palette.isDark ? .monospaced : .default, weight: .bold))
+                    .foregroundStyle(palette.selectionInk)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(palette.selection, in: .rect(cornerRadius: palette.isDark ? 7 : 12))
+                Text(airport.displayName)
+                    .font(AtlasTypography.font(.body, weight: .semibold))
+                    .foregroundStyle(palette.ink)
+                Spacer(minLength: 4)
+                Image(systemName: DistributionPolicy.airportSiteModelsAvailable ? "cube" : "chevron.right")
+                    .foregroundStyle(palette.accent)
+                    .accessibilityHidden(true)
             }
-            HStack(spacing: 7) {
-                Button("返回全球", systemImage: "globe", action: reset)
-                    .buttonStyle(.glass)
-#if !MAINLAND_DISTRIBUTION
-                Button {
-                    routeLayer.toggle()
-                } label: {
-                    Label("航线", systemImage: routeLayer ? "point.topleft.down.to.point.bottomright.curvepath.fill" : "point.topleft.down.to.point.bottomright.curvepath")
-                }
-                .buttonStyle(.glass)
-                .accessibilityAddTraits(routeLayer ? .isSelected : [])
-                Menu {
-                    Toggle("直升机场", systemImage: "helicopter", isOn: $showsHeliports)
-                        .accessibilityIdentifier("globe-show-heliports")
-                    Toggle("其他机场", systemImage: "mappin", isOn: $showsOtherAirports)
-                        .accessibilityIdentifier("globe-show-other-airports")
-                } label: {
-                    Label("机场类型", systemImage: showsHeliports || showsOtherAirports
-                          ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                }
-                .buttonStyle(.glass)
-                .accessibilityValue(airportCategoriesLabel)
-                .accessibilityIdentifier("globe-airport-categories")
-#endif
-            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 4)
+            .background(palette.surface)
+            .contentShape(.rect)
         }
-        .colorScheme(.dark)
-        .tint(.mint)
+        .buttonStyle(.plain)
+        .accessibilityHint(DistributionPolicy.airportSiteModelsAvailable ? "打开三维模型" : "查看机场资料")
+        .accessibilityIdentifier("globe-featured-\(airport.id)")
     }
 }
-#endif

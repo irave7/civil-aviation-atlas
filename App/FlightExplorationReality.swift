@@ -7,6 +7,11 @@ struct FlightExplorationReality: View {
     let route: FlightRoute
     var onWind: (Double) -> Void = { _ in }
 
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
+
     #if !MAINLAND_DISTRIBUTION
     @State private var request = 0
     @State private var isLoading = false
@@ -31,7 +36,7 @@ struct FlightExplorationReality: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: palette.contentGap) {
                 Text("机场天气与航班资料")
                     .font(AtlasTypography.font(.title3, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
@@ -40,24 +45,32 @@ struct FlightExplorationReality: View {
                     Text("已收录班表 \(details)")
                         .font(AtlasTypography.font(.subheadline))
                     if let time = localTimeLabel(for: route) {
-                        Text(time).font(AtlasTypography.font(.footnote)).foregroundStyle(.secondary)
+                        Text(time)
+                            .font(AtlasTypography.font(.footnote).monospacedDigit())
+                            .foregroundStyle(palette.muted)
                     }
                 }
                 #if MAINLAND_DISTRIBUTION
                 Text("航程可离线体验。天气和航班动态以机场和航司公告为准。")
                     .font(AtlasTypography.font(.subheadline))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
                 #else
                 if DistributionPolicy.liveFlightsAvailable {
                     onlineObservations
                 }
                 #endif
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(palette.ink)
+            .frame(maxWidth: 680, alignment: .leading)
             .padding(16)
-            .background(.quaternary, in: .rect(cornerRadius: 16))
+            .atlasPanel(palette)
             .padding(16)
+            .frame(maxWidth: .infinity)
         }
+        .background(palette.page)
+        .tint(palette.accent)
+        .toolbarBackground(palette.surface, for: .navigationBar)
+        .toolbarBackgroundVisibility(.visible, for: .navigationBar)
         .accessibilityIdentifier("exploration-reality-panel")
     }
 
@@ -90,25 +103,25 @@ struct FlightExplorationReality: View {
                         .accessibilityIdentifier("exploration-reality-wind")
                         if let selectedWind {
                             Text("已采用 \(selectedWind) 地面风速")
-                                .foregroundStyle(.teal)
+                                .foregroundStyle(palette.accent)
                                 .accessibilityIdentifier("exploration-reality-wind-applied")
                         }
                     }
                     Text("采用最近有效机场观测中的地面风速来调整模拟动态。巡航颠簸和具体跑道风况以相应的实际观测为准。")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                 case .failure:
                     Text("机场天气暂时无法读取。仍可体验预设情景。")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                 }
                 Link("NOAA 航空气象中心 · METAR", destination: FlightRealitySource.weatherDocumentation)
             }
             if let callsign, let aircraft {
-                Divider()
+                Divider().overlay(palette.line)
                 aircraftRow(callsign, result: aircraft)
                 Link("adsb.lol · ODbL 1.0", destination: FlightRealitySource.aircraftDocumentation)
             } else if callsign == nil {
                 Text("此航线暂无可核实的实时执飞资料。")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
             }
         }
         .font(AtlasTypography.font(.footnote))
@@ -122,16 +135,18 @@ struct FlightExplorationReality: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("\(airport.displayName) · \(airport.displayCode)").fontWeight(.semibold)
             if let report {
-                Text(report.windDescription)
-                if let temperature = report.temperature { Text("气温 \(temperature.formatted()) ℃") }
-                Text("观测 \(Self.utcLabel(report.date))").foregroundStyle(.secondary)
+                Text(report.windDescription).monospacedDigit()
+                if let temperature = report.temperature { Text("气温 \(temperature.formatted()) ℃").monospacedDigit() }
+                Text("观测 \(Self.utcLabel(report.date))")
+                    .monospacedDigit()
+                    .foregroundStyle(palette.muted)
                 if let raw = report.raw, !raw.isEmpty {
                     DisclosureGroup("METAR 原文") {
                         Text(raw).font(.system(.footnote, design: .monospaced))
                     }
                 }
             } else {
-                Text("近 4 小时暂无可用机场观测").foregroundStyle(.secondary)
+                Text("近 4 小时暂无可用机场观测").foregroundStyle(palette.muted)
             }
         }
     }
@@ -141,17 +156,21 @@ struct FlightExplorationReality: View {
             Text("公开信号 · \(callsign)").fontWeight(.semibold)
             switch result {
             case .success(let observation?):
-                if let altitude = observation.altitude { Text("气压高度 \(altitude.formatted()) 英尺") }
-                if let speed = observation.groundSpeed { Text("地速 \(speed.formatted(.number.precision(.fractionLength(0)))) 节") }
-                Text("观测 \(Self.utcLabel(observation.date))").foregroundStyle(.secondary)
+                if let altitude = observation.altitude { Text("气压高度 \(altitude.formatted()) 英尺").monospacedDigit() }
+                if let speed = observation.groundSpeed {
+                    Text("地速 \(speed.formatted(.number.precision(.fractionLength(0)))) 节").monospacedDigit()
+                }
+                Text("观测 \(Self.utcLabel(observation.date))")
+                    .monospacedDigit()
+                    .foregroundStyle(palette.muted)
                 Text("接收到该呼号信号。实际执飞、起降机场和航班状态请以航司资料为准。")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
             case .success(nil):
                 Text("暂无可唯一匹配的近期信号。覆盖随接收站分布变化。")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
             case .failure:
                 Text("暂时无法读取该呼号的公开信号。")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
             }
         }
     }

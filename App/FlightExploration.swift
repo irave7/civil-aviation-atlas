@@ -39,6 +39,8 @@ struct FlightExploration: View {
     let library: AtlasLibrary
     let openAirport: (Airport) -> Void
 
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var scope = ExplorationScope.mainland
     @State private var originID = "SHA"
     @State private var picksOrigin = false
@@ -46,15 +48,19 @@ struct FlightExploration: View {
     @State private var destinationFilter = ""
     @State private var activeLeg: ExplorationLeg?
 
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 23) {
-                VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: palette.contentGap + 8) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("沿航线探索")
-                        .font(AtlasTypography.font(.largeTitle, weight: .bold))
+                        .font(AtlasTypography.font(.largeTitle, weight: palette.isDark ? .semibold : .bold))
+                        .foregroundStyle(palette.ink)
                         .accessibilityAddTraits(.isHeader)
-                    Text("选择两座机场，观看一段从起飞到抵达的航程。")
-                        .foregroundStyle(.secondary)
+                    Text("选择出发机场和目的地，开启一段模拟航程。")
+                        .font(AtlasTypography.font(.subheadline))
+                        .foregroundStyle(palette.muted)
                 }
                 Picker("探索范围", selection: $scope) {
                     ForEach(ExplorationScope.allCases) { item in Text(item.rawValue).tag(item) }
@@ -68,22 +74,27 @@ struct FlightExploration: View {
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "airplane.departure")
-                                .foregroundStyle(.teal)
-                                .font(.title2)
+                                .foregroundStyle(palette.selectionInk)
+                                .font(.title3)
+                                .padding(12)
+                                .background(palette.selection, in: .rect(cornerRadius: 10))
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("出发机场").font(.caption).foregroundStyle(.secondary)
+                                Text("出发机场")
+                                    .font(AtlasTypography.font(.caption))
+                                    .foregroundStyle(palette.muted)
                                 Text("\(origin.displayCode) · \(origin.displayName)")
                                     .font(AtlasTypography.font(.headline))
-                                    .foregroundStyle(.primary)
+                                    .foregroundStyle(palette.ink)
                             }
                             Spacer()
                             Image(systemName: "chevron.up.chevron.down")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(palette.muted)
                                 .accessibilityHidden(true)
                         }
-                        .padding(15)
-                        .background(.quaternary, in: .rect(cornerRadius: 16))
+                        .padding(palette.isDark ? 13 : 16)
+                        .atlasPanel(palette)
+                        .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("exploration-origin")
@@ -92,6 +103,8 @@ struct FlightExploration: View {
             }
             .atlasReadingWidth()
         }
+        .background(palette.page)
+        .tint(palette.accent)
         .accessibilityIdentifier("flight-exploration")
         .task(id: scope) {
             let currentScope = scope
@@ -132,7 +145,10 @@ struct FlightExploration: View {
             leg.end.nameSearchTerms.contains { $0.localizedStandardContains(search) }
         }
         VStack(alignment: .leading, spacing: 12) {
-            Text("目的地").font(AtlasTypography.font(.title2, weight: .bold))
+            Text("目的地")
+                .font(AtlasTypography.font(.title2, weight: .bold))
+                .foregroundStyle(palette.ink)
+                .accessibilityAddTraits(.isHeader)
             if available.count > 7 {
                 TextField("搜索目的地或机场代码", text: $destinationFilter)
                     .textFieldStyle(.roundedBorder)
@@ -144,7 +160,7 @@ struct FlightExploration: View {
                     systemImage: "airplane.arrival"
                 )
             }
-            LazyVStack(spacing: 7) {
+            LazyVStack(spacing: palette.isDark ? 6 : 9) {
                 ForEach(matches) { leg in
                     Button {
                         activeLeg = leg
@@ -152,27 +168,32 @@ struct FlightExploration: View {
                         HStack(spacing: 12) {
                             Text(leg.end.displayCode)
                                 .font(.system(.headline, design: .monospaced).weight(.semibold))
-                                .foregroundStyle(.teal)
+                                .foregroundStyle(palette.accent)
                                 .frame(minWidth: 44, alignment: .leading)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(leg.end.displayName).font(AtlasTypography.font(.subheadline, weight: .semibold))
-                                    .foregroundStyle(.primary)
+                                Text(leg.end.displayName)
+                                    .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                                    .foregroundStyle(palette.ink)
                                 if let model = leg.aircraftProfile, let livery = leg.aircraftLivery, let airline = livery.operatorName {
                                     Text("\(airline) · \(model.displayName)")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(AtlasTypography.font(.caption))
+                                        .foregroundStyle(palette.muted)
                                 }
                             }
                             Spacer()
-                            Text("\(Int(leg.distance.rounded()).formatted()) 公里")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                            Text("\(Int(leg.distance.rounded()).formatted()) km")
+                                .font(palette.readout(.caption, weight: .medium).monospacedDigit())
+                                .foregroundStyle(palette.isDark ? palette.accent : palette.muted)
+                                .accessibilityLabel("\(Int(leg.distance.rounded()).formatted()) 公里")
                             Image(systemName: "play.circle")
-                                .foregroundStyle(.teal)
+                                .foregroundStyle(palette.accent)
                                 .accessibilityHidden(true)
                         }
                         .padding(.horizontal, 13)
                         .padding(.vertical, 12)
-                        .background(.quaternary, in: .rect(cornerRadius: 13))
+                        .frame(minHeight: 48)
+                        .atlasPanel(palette)
+                        .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("exploration-route-\(leg.end.id)")
@@ -219,7 +240,11 @@ private struct ExplorationOriginPicker: View {
     let preferred: [String]
     let select: (Airport) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var query = ""
+
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -236,6 +261,9 @@ private struct ExplorationOriginPicker: View {
                     ForEach(choices, content: airportButton)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(palette.page)
+            .tint(palette.accent)
             .searchable(text: $query, prompt: "机场名称或代码")
             .navigationTitle("选择出发机场")
             .navigationBarTitleDisplayMode(.inline)
@@ -249,11 +277,12 @@ private struct ExplorationOriginPicker: View {
         } label: {
             HStack {
                 Text(airport.displayCode).font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(.teal)
+                    .foregroundStyle(palette.accent)
                     .frame(minWidth: 47, alignment: .leading)
-                Text(airport.displayName).foregroundStyle(.primary)
+                Text(airport.displayName).foregroundStyle(palette.ink)
             }
         }
+        .listRowBackground(palette.surface)
         .accessibilityIdentifier("exploration-origin-\(airport.id)")
     }
 }
@@ -288,6 +317,14 @@ private enum ExplorationWind: String, CaseIterable, Identifiable {
 private enum ExplorationCheckpoint: Int, CaseIterable {
     case rotate, gearUp, gearDown
 
+    var narrationCue: ExplorationNarrationCue {
+        switch self {
+        case .rotate: .rotate
+        case .gearUp: .gearUp
+        case .gearDown: .gearDown
+        }
+    }
+
     var timeFraction: Double {
         switch self {
         case .rotate: 0.09
@@ -315,6 +352,15 @@ private enum ExplorationCheckpoint: Int, CaseIterable {
 
 private enum ExplorationPhase: Int, CaseIterable {
     case departing, cruise, approach, arrived
+
+    var narrationCue: ExplorationNarrationCue {
+        switch self {
+        case .departing: .departing
+        case .cruise: .cruise
+        case .approach: .approach
+        case .arrived: .arrived
+        }
+    }
 
     init(progress: Double) {
         switch progress {
@@ -349,11 +395,16 @@ private struct FlightExplorationPlayback: View {
     let openAirport: (Airport) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var textSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("atlas.exploration.voice.v1") private var narrationVoice = ExplorationVoice.guide
     @State private var accumulated = 0.0
     @State private var started: Date?
     @State private var narration = false
+    @State private var showsNarrationStyles = false
     @State private var speaker = ExplorationNarrator()
     @State private var mode = ExplorationControlMode.automatic
     @State private var completedSteps = 0
@@ -369,42 +420,73 @@ private struct FlightExplorationPlayback: View {
     @State private var customizedLivery: AircraftLivery?
 
     private let duration = 23.0
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(alignment: .top, spacing: 8) {
-                        endpoint(leg.start, alignment: .leading)
-                        Image(systemName: "arrow.right").foregroundStyle(.teal).accessibilityHidden(true)
-                        endpoint(leg.end, alignment: .trailing)
-                    }
-                    Picker("飞行方式", selection: $mode) {
-                        ForEach(ExplorationControlMode.allCases) { item in Text(item.rawValue).tag(item) }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: mode) { _, _ in reset() }
-                    .accessibilityIdentifier("exploration-control-mode")
+            GeometryReader { viewport in
+                let wide = viewport.size.width >= 690 && !textSize.isAccessibilitySize
+                let short = viewport.size.height < 460
+                let stageHeight: CGFloat = wide ? (short ? 184 : 296) : 218
+                let layout = wide
+                    ? AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                    : AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: palette.contentGap) {
+                        itinerary
+                        Picker("飞行方式", selection: $mode) {
+                            ForEach(ExplorationControlMode.allCases) { item in Text(item.rawValue).tag(item) }
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: mode) { _, _ in reset() }
+                        .accessibilityIdentifier("exploration-control-mode")
 
-                    playbackStage
-                    playbackControls
-                    if mode == .interactive { interactionControls }
-                    flightReference
+                        layout {
+                            playbackStage(height: stageHeight)
+                                .frame(maxWidth: .infinity)
+                                .layoutPriority(1)
+                            pilotControls
+                                .frame(width: wide ? (short ? 238 : 284) : nil)
+                        }
+
+                        flightReference
+                    }
+                    .frame(maxWidth: 1100, alignment: .leading)
+                    .padding(.horizontal, short ? 16 : 22)
+                    .padding(.vertical, short ? 12 : 22)
+                    .frame(maxWidth: .infinity)
                 }
-                .atlasReadingWidth()
             }
+            .background(palette.page)
+            .tint(palette.accent)
             .navigationTitle("模拟航程")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(palette.surface, for: .navigationBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("关闭", systemImage: "xmark") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        pause()
+                        showsLiveryEditor = true
+                    } label: {
+                        Label("自定义涂装", systemImage: "paintpalette")
+                            .labelStyle(.iconOnly)
+                    }
+                    .accessibilityIdentifier("exploration-livery-editor")
+                    Button { showsNarrationStyles = true } label: {
+                        Label("语音风格", systemImage: "waveform")
+                            .labelStyle(.iconOnly)
+                    }
+                    .accessibilityLabel("语音风格，\(narrationVoice.selectorTitle)")
+                    .accessibilityValue(narrationVoice.selectorTitle)
+                    .accessibilityIdentifier("exploration-voice")
                     Button(narration ? "关闭语音" : "开启语音", systemImage: narration ? "speaker.wave.2.fill" : "speaker.slash") {
                         narration.toggle()
                         if narration {
-                            if let checkpoint { speak(checkpoint.instruction) }
-                            else { announce(ExplorationPhase(progress: elapsed(at: .now) / duration)) }
+                            narrateCurrentPosition()
                         } else {
                             speaker.stop()
                         }
@@ -431,6 +513,7 @@ private struct FlightExplorationPlayback: View {
                 }
             }
         }
+        .sheet(isPresented: $showsNarrationStyles, content: narrationStyles)
         .sheet(isPresented: $showsReality) {
             NavigationStack {
                 FlightExplorationReality(origin: leg.start, destination: leg.end, route: leg.evidence) { knots in
@@ -446,7 +529,54 @@ private struct FlightExplorationPlayback: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { pause() }
         }
+        .onChange(of: narrationVoice) { _, _ in
+            if narration { narrateCurrentPosition() }
+        }
         .onDisappear { speaker.stop() }
+    }
+
+    private func narrationStyles() -> some View {
+        NavigationStack {
+            List(ExplorationVoice.allCases) { voice in
+                Button {
+                    narrationVoice = voice
+                    showsNarrationStyles = false
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(voice.selectorTitle)
+                                .font(AtlasTypography.font(.body, weight: .semibold))
+                                .foregroundStyle(palette.ink)
+                            Text(voice.description)
+                                .font(AtlasTypography.font(.subheadline))
+                                .foregroundStyle(palette.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 6)
+                        if narrationVoice == voice {
+                            Image(systemName: "checkmark").foregroundStyle(palette.accent)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .frame(minHeight: 48)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(narrationVoice == voice ? palette.selection : palette.surface)
+                .accessibilityIdentifier("exploration-voice-\(voice.rawValue)")
+                .accessibilityAddTraits(narrationVoice == voice ? .isSelected : [])
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(palette.page)
+            .navigationTitle("语音风格")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showsNarrationStyles = false }
+                }
+            }
+        }
     }
 
     private var nextCheckpoint: ExplorationCheckpoint? {
@@ -454,7 +584,41 @@ private struct FlightExplorationPlayback: View {
         return ExplorationCheckpoint(rawValue: completedSteps)
     }
 
-    private var playbackStage: some View {
+    private var itinerary: some View {
+        let stacked = textSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        return layout {
+            endpoint(leg.start, alignment: .leading)
+            if !stacked { itineraryDivider }
+            VStack(spacing: 4) {
+                if !stacked {
+                    Image(systemName: "arrow.right")
+                        .font(.caption.weight(.semibold))
+                        .accessibilityHidden(true)
+                }
+                Text("\(Int(leg.distance.rounded()).formatted()) km")
+                    .font(palette.readout(.subheadline).monospacedDigit())
+                    .accessibilityLabel("\(Int(leg.distance.rounded()).formatted()) 公里")
+            }
+            .foregroundStyle(palette.accent)
+            .fixedSize(horizontal: !stacked, vertical: false)
+            if !stacked { itineraryDivider }
+            endpoint(leg.end, alignment: stacked ? .leading : .trailing)
+        }
+        .padding(.horizontal, palette.isDark ? 14 : 16)
+        .padding(.vertical, 12)
+        .atlasPanel(palette)
+    }
+
+    private var itineraryDivider: some View {
+        Divider().overlay(palette.line)
+            .frame(width: 1, height: 24)
+            .accessibilityHidden(true)
+    }
+
+    private func playbackStage(height: CGFloat) -> some View {
         let reference = leg.aircraftProfile ?? (customizedLivery == nil ? nil : AircraftProfile.byID["a320neo"])
         let livery = customizedLivery ?? leg.aircraftLivery ?? AircraftLiveries.reference
         return TimelineView(.animation(minimumInterval: 1 / 30, paused: started == nil)) { clock in
@@ -465,26 +629,54 @@ private struct FlightExplorationPlayback: View {
             let shownProgress = reduceMotion ? Double(phase.rawValue) / 3 : progress
             let basePitch = mode == .interactive ? pitch : 6 * sin(progress * 2 * .pi)
             let gear = mode == .interactive ? gearDown : progress < 0.23 || progress >= 0.82
-            VStack(alignment: .leading, spacing: 14) {
-                if let profile = reference {
-                    FlightExplorationAircraft(profile: profile, livery: livery, progress: shownProgress,
-                                              pitch: basePitch + pitchEffect, gearDown: gear)
-                        .frame(height: 230)
-                        .clipShape(.rect(cornerRadius: 22))
-                } else {
-                    ExplorationSky(progress: shownProgress, airborne: !gear, pitch: basePitch + pitchEffect)
-                        .frame(height: 190)
-                        .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Group {
+                    if let profile = reference {
+                        FlightExplorationAircraft(profile: profile, livery: livery, progress: shownProgress,
+                                                  pitch: basePitch + pitchEffect, gearDown: gear)
+                    } else {
+                        ExplorationSky(progress: shownProgress, airborne: !gear, pitch: basePitch + pitchEffect)
+                            .accessibilityHidden(true)
+                    }
                 }
-                ProgressView(value: progress)
-                    .accessibilityLabel("航程进度")
-                Text(phase.title)
-                    .font(AtlasTypography.font(.title2, weight: .bold))
-                    .accessibilityIdentifier("exploration-phase")
-                Text(checkpoint?.instruction ?? phase.commentary(leg))
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("exploration-instruction")
+                .frame(height: height)
+                .overlay(alignment: .topLeading) {
+                    if let reference {
+                        Text(reference.modelName)
+                            .font(.system(.caption, design: .monospaced, weight: .semibold))
+                            .foregroundStyle(palette.stageAccent)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .background(palette.stage.opacity(0.86), in: .rect(cornerRadius: 7))
+                            .padding(12)
+                            .accessibilityHidden(true)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    ProgressView(value: progress)
+                        .tint(palette.stageAccent)
+                        .accessibilityLabel("航程进度")
+                    Text(phase.title)
+                        .font(AtlasTypography.font(.title3, weight: .bold))
+                        .foregroundStyle(palette.stageInk)
+                        .accessibilityIdentifier("exploration-phase")
+                    if narration && narrationVoice != .system {
+                        Label(narrationVoice.selectorTitle, systemImage: "waveform")
+                            .font(AtlasTypography.font(.caption))
+                            .foregroundStyle(palette.stageAccent)
+                            .accessibilityIdentifier("exploration-active-voice")
+                    }
+                    Text(checkpoint?.instruction ?? phase.commentary(leg))
+                        .font(AtlasTypography.font(.subheadline))
+                        .foregroundStyle(palette.stageMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("exploration-instruction")
+                }
+                .padding(15)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(palette.stage)
+            .clipShape(.rect(cornerRadius: palette.corner))
             .onChange(of: phase) { _, next in
                 if checkpoint == nil { announce(next) }
                 if next == .arrived {
@@ -497,10 +689,24 @@ private struct FlightExplorationPlayback: View {
                     accumulated = step.timeFraction * duration
                     started = nil
                     checkpoint = step
-                    speak(step.instruction)
+                    speak(step.narrationCue, fallback: step.instruction)
                 }
             }
         }
+    }
+
+    private var pilotControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(mode == .interactive ? "飞行操纵" : "航程控制")
+                .font(AtlasTypography.font(.headline))
+                .foregroundStyle(palette.ink)
+                .accessibilityAddTraits(.isHeader)
+            if mode == .interactive { interactionControls }
+            playbackControls
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .atlasPanel(palette)
     }
 
     private var playbackControls: some View {
@@ -524,6 +730,7 @@ private struct FlightExplorationPlayback: View {
             }
         }
         .buttonStyle(.glassProminent)
+        .foregroundStyle(palette.onAccent)
         .disabled(checkpoint != nil)
         .accessibilityIdentifier("exploration-playback-control")
         Menu("速度 \(Int(speed))×", systemImage: "speedometer") {
@@ -547,12 +754,13 @@ private struct FlightExplorationPlayback: View {
 
     private var interactionControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("飞行操纵").font(AtlasTypography.font(.headline))
             HStack {
-                Text("机头俯仰")
+                Text("机头俯仰").font(AtlasTypography.font(.subheadline))
                 Spacer()
-                Text("\(Int(pitch.rounded()))°").monospacedDigit()
-            }.font(.subheadline)
+                Text("\(Int(pitch.rounded()))°")
+                    .font(palette.readout(.subheadline).monospacedDigit())
+                    .foregroundStyle(palette.accent)
+            }
             Slider(value: $pitch, in: -20...20, step: 1) {
                 Text("机头俯仰")
             }
@@ -565,33 +773,37 @@ private struct FlightExplorationPlayback: View {
             .accessibilityIdentifier("exploration-wind")
             Text(wind == .observed ? "使用机场观测风速调整进近演示。"
                   : "气流由演示情境产生。实际颠簸和侧风需以航空气象资料为准。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AtlasTypography.font(.caption))
+                .foregroundStyle(palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
             if let checkpoint {
                 Button(checkpoint.action, systemImage: checkpoint == .rotate ? "airplane.departure" : "gearshape.fill") {
                     completeCheckpoint(checkpoint)
                 }
                 .buttonStyle(.glassProminent)
+                .foregroundStyle(palette.onAccent)
                 .disabled(checkpoint == .rotate && pitch < 5)
                 .accessibilityIdentifier("exploration-action-\(checkpoint.rawValue)")
             }
         }
-        .padding(14)
-        .background(.quaternary, in: .rect(cornerRadius: 17))
     }
 
     private var flightReference: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("航程资料").font(AtlasTypography.font(.headline))
+            Text("航程资料")
+                .font(AtlasTypography.font(.headline))
+                .foregroundStyle(palette.ink)
+                .accessibilityAddTraits(.isHeader)
             Text("\(Int(leg.distance.rounded()).formatted()) 公里 · 机场间大圆距离")
                 .font(.subheadline.weight(.semibold))
             Text("航迹、飞行操纵与用时为演示。实际安排以航空公司及机场公布为准。")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
             if let profile = leg.aircraftProfile {
                 Text("\(leg.evidence.airline) · \(profile.displayName)")
                     .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier("exploration-aircraft-reference")
                 Text(leg.aircraftLivery.map { "参考涂装 \($0.name)" } ?? "图鉴基准涂装")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
             }
             if leg.evidence.origin == leg.start.id, let number = leg.evidence.flightNumber {
                 Text("资料航班 \(number) · \(leg.evidence.status ?? "收录示例")")
@@ -600,17 +812,12 @@ private struct FlightExplorationPlayback: View {
             if let customizedLivery {
                 let preview = leg.aircraftProfile ?? AircraftProfile.byID["a320neo"]
                 Text("\(preview?.displayName ?? "") · \(customizedLivery.name)")
-                    .font(.subheadline).foregroundStyle(.teal)
+                    .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.accent)
                     .accessibilityIdentifier("exploration-custom-livery")
             }
-            Button("自定义涂装", systemImage: "paintpalette") {
-                pause()
-                showsLiveryEditor = true
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("exploration-livery-editor")
             if let stats = leg.evidence.observedStatistics?.first {
-                Text("实飞资料统计期 \(stats.observation.period)").font(.footnote).foregroundStyle(.secondary)
+                Text("实飞资料统计期 \(stats.observation.period)")
+                    .font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
             }
             if let source = leg.evidence.source, let url = URL(string: source.url) {
                 Link(source.title, destination: url).font(.footnote)
@@ -630,6 +837,9 @@ private struct FlightExplorationPlayback: View {
                 .accessibilityIdentifier("exploration-reality")
             }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .atlasPanel(palette)
     }
 
     @ViewBuilder
@@ -667,8 +877,10 @@ private struct FlightExplorationPlayback: View {
 
     private func endpoint(_ airport: Airport, alignment: HorizontalAlignment) -> some View {
         VStack(alignment: alignment, spacing: 4) {
-            Text(airport.displayCode).font(.system(.title2, design: .monospaced).weight(.semibold))
-            Text(airport.displayName).font(AtlasTypography.font(.caption)).foregroundStyle(.secondary)
+            Text(airport.displayCode)
+                .font(palette.readout(.title2, weight: .bold))
+                .foregroundStyle(palette.ink)
+            Text(airport.displayName).font(AtlasTypography.font(.caption)).foregroundStyle(palette.muted)
                 .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
@@ -685,11 +897,19 @@ private struct FlightExplorationPlayback: View {
     }
 
     private func announce(_ phase: ExplorationPhase) {
-        speak(phase.commentary(leg))
+        speak(phase.narrationCue, fallback: phase.commentary(leg))
     }
 
-    private func speak(_ text: String) {
-        if narration { speaker.speak(text) }
+    private func narrateCurrentPosition() {
+        if let checkpoint {
+            speak(checkpoint.narrationCue, fallback: checkpoint.instruction)
+        } else {
+            announce(ExplorationPhase(progress: elapsed(at: .now) / duration))
+        }
+    }
+
+    private func speak(_ cue: ExplorationNarrationCue, fallback text: String) {
+        if narration { speaker.speak(cue, voice: narrationVoice, fallback: text) }
     }
 }
 

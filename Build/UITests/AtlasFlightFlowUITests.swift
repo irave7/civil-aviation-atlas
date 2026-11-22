@@ -117,7 +117,7 @@ final class AtlasFlightFlowUITests: XCTestCase {
 
     func testNativeFlightBoardAndNumberedRouteDetails() {
         let app = launchAtlas()
-        tap("globe-featured-SIN", in: app)
+        openSingapore(in: app)
         tap("airport-mode-routes", in: app)
         tap("airport-flight-details", in: app)
         XCTAssertTrue(control("flight-details-board", in: app).waitForExistence(timeout: 12))
@@ -128,7 +128,7 @@ final class AtlasFlightFlowUITests: XCTestCase {
         app.terminate()
 
         app.launch()
-        tap("globe-featured-SIN", in: app)
+        openSingapore(in: app)
         tap("airport-mode-routes", in: app)
         let search = control("route-search-field", in: app)
         XCTAssertTrue(search.waitForExistence(timeout: 15))
@@ -141,6 +141,16 @@ final class AtlasFlightFlowUITests: XCTestCase {
         XCTAssertTrue(control("flight-details-board", in: app).waitForExistence(timeout: 12))
         assertFlightFacts(in: app)
         XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    private func openSingapore(in app: XCUIApplication) {
+        tap("globe-airports", in: app)
+        let search = app.textFields.matching(identifier: "search-field").firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 12))
+        search.tap()
+        search.typeText("SIN\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 8))
+        tap("airport-SIN", in: app, scrolls: true)
     }
 
     private func assertFlightFacts(in app: XCUIApplication) {

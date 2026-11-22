@@ -8,6 +8,8 @@ struct ExplorationLiveryEditor: View {
     let apply: (AircraftLivery) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(ExplorationLiveryEditor.storageKey) private var savedPalette = ""
     @State private var bodyPaint: Color
     @State private var primaryPaint: Color
@@ -16,6 +18,7 @@ struct ExplorationLiveryEditor: View {
 
     private static let storageKey = "atlas.exploration.custom-livery.v1"
     private static let patterns: [AircraftLivery.Palette.Pattern] = [.lowStripe, .tailSweep, .wideBelly, .ribbon, .fullBody]
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     init(profile: AircraftProfile, baseline: AircraftLivery, apply: @escaping (AircraftLivery) -> Void) {
         self.profile = profile
@@ -38,34 +41,47 @@ struct ExplorationLiveryEditor: View {
         NavigationStack {
             Form {
                 Section {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 0) {
                         ExplorationLiverySwatch(bodyPaint: bodyPaint, primaryPaint: primaryPaint,
-                                                accentPaint: accentPaint, pattern: pattern)
-                            .frame(height: 136)
+                                                accentPaint: accentPaint, pattern: pattern, backdrop: palette.stage)
+                            .frame(height: 144)
                             .accessibilityHidden(true)
                         Text(profile.displayName)
                             .font(AtlasTypography.font(.headline, weight: .semibold))
+                            .foregroundStyle(palette.stageInk)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 12)
                     }
-                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(palette.stage)
+                    .clipShape(.rect(cornerRadius: palette.corner))
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 }
                 Section("颜色") {
                     ColorPicker("机身底色", selection: $bodyPaint, supportsOpacity: false)
+                        .listRowBackground(palette.surface)
                         .accessibilityIdentifier("exploration-livery-body")
                     ColorPicker("主涂装色", selection: $primaryPaint, supportsOpacity: false)
+                        .listRowBackground(palette.surface)
                         .accessibilityIdentifier("exploration-livery-primary")
                     ColorPicker("点缀色", selection: $accentPaint, supportsOpacity: false)
+                        .listRowBackground(palette.surface)
                         .accessibilityIdentifier("exploration-livery-accent")
                 }
                 Section("图案") {
                     Picker("图案", selection: $pattern) {
                         ForEach(Self.patterns, id: \.self) { choice in
                             Text(choice.explorationLabel)
+                                .foregroundStyle(palette.ink)
+                                .listRowBackground(palette.surface)
                                 .tag(choice)
                                 .accessibilityIdentifier("exploration-livery-pattern-\(choice.rawValue)")
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.inline)
+                    .listRowBackground(palette.surface)
                     .accessibilityIdentifier("exploration-livery-pattern")
                 }
                 Section {
@@ -73,9 +89,13 @@ struct ExplorationLiveryEditor: View {
                         apply(baseline)
                         dismiss()
                     }
+                    .listRowBackground(palette.surface)
                     .accessibilityIdentifier("exploration-livery-restore")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(palette.page)
+            .tint(palette.accent)
             .navigationTitle("我的涂装")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -154,6 +174,7 @@ private struct ExplorationLiverySwatch: View {
     let primaryPaint: Color
     let accentPaint: Color
     let pattern: AircraftLivery.Palette.Pattern
+    let backdrop: Color
 
     var body: some View {
         Canvas { context, size in
@@ -228,10 +249,8 @@ private struct ExplorationLiverySwatch: View {
                          with: .color(Color(red: 0.08, green: 0.16, blue: 0.23).opacity(0.8)))
         }
         .background {
-            RoundedRectangle(cornerRadius: 18).fill(
-                LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.32), Color(red: 0.18, green: 0.38, blue: 0.43)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-            )
+            LinearGradient(colors: [Color(red: 0.16, green: 0.34, blue: 0.40), backdrop],
+                           startPoint: .topLeading, endPoint: .bottom)
         }
     }
 }

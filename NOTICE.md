@@ -10,3 +10,6 @@
 - 探索模式使用公开机场间大圆距离。国内精选机场对依据[中国国际航空公开航点示例](https://webresource.airchina.com.cn/zh-CN/content/marketing/yxhdymjh/2025scck/)，用途为资料演示，不代表当前可售班表。
 - Apple 卫星影像通过 MapKit 在线访问。境外机场的首选历史影像为 [EOxCloudless](https://cloudless.eox.at/) © EOX IT Services GmbH，包含经修改的 Copernicus Sentinel 2016 及 2017 数据，适用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。影像瓦片随在线视图请求。
 - 标准构建的航程观测由用户主动发起。机场风况来自 [NOAA 航空气象中心 METAR API](https://aviationweather.gov/data/api/)。符合条件的航班呼号从 [adsb.lol](https://www.adsb.lol/docs/open-data/api) 查询，公开信号适用 [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/)，覆盖和观测时间按来源显示。
+
+
+航程的普通话预制配音使用 [Kokoro-82M-v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)（Apache 2.0）和 [Sherpa-ONNX v2.0.2](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v2.0.2)。脚本与原创台词见 [Build/prepare-narration.py](Build/prepare-narration.py)。应用随包提供音频片段。生成工具、模型权重和原始训练语料均未随应用分发。

@@ -15,6 +15,7 @@ xcuserdata/
 !/Build/App.xcconfig
 !/Build/MainlandReview.xcconfig
 !/Build/prepare-mainland-catalog.py
+!/Build/prepare-narration.py
 !/Build/update-airport-scheduled-service.py
 !/Build/UITests.xcconfig
 !/Build/UITests/

@@ -6,6 +6,12 @@ struct AirportLongestRouteBanner: View {
     let airport: Airport
     let library: AtlasLibrary
     let open: (FlightRoute) -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         Group {
@@ -13,52 +19,83 @@ struct AirportLongestRouteBanner: View {
                let km = route.distanceKm,
                let endpoint = library.airport(route.origin == airport.id ? route.destination : route.origin) {
                 Button { open(route) } label: {
-                    HStack(spacing: 13) {
-                        Image(systemName: "arrow.up.right.circle")
-                            .font(AtlasTypography.font(.title3, weight: .semibold))
-                            .foregroundStyle(.teal)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(route.hasVerifiedNonstop ? "已收录最远直飞" : "已收录最远航线")
-                                .font(AtlasTypography.font(.caption, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            Text("\(endpoint.displayName) · \(endpoint.displayCode)")
-                                .font(AtlasTypography.font(.headline))
+                    if typeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 5) {
+                            routeTitle(route, endpoint: endpoint)
+                            distanceReadout(km)
+                            routeEvidence(route)
                         }
-                        Spacer(minLength: 6)
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text(displayDistance(km))
-                                .font(AtlasTypography.font(.title3, weight: .semibold).monospacedDigit())
-                            if let item = route.observedStatistics?.first {
-                                Text("实飞 · \(item.observation.period)")
-                                    .font(AtlasTypography.font(.caption))
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                RouteStatusBadge(route: route, day: FlightCalendar.isoDate(.now))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        HStack(spacing: 10) {
+                            Image(systemName: "arrow.up.right.circle")
+                                .font(AtlasTypography.font(.title3, weight: .semibold))
+                                .foregroundStyle(palette.accent)
+                                .accessibilityHidden(true)
+                            routeTitle(route, endpoint: endpoint)
+                                .layoutPriority(1)
+                            Spacer(minLength: 4)
+                            VStack(alignment: .trailing, spacing: 4) {
+                                distanceReadout(km)
+                                if horizontalSizeClass == .regular { routeEvidence(route) }
                             }
+                            .fixedSize(horizontal: true, vertical: false)
                         }
                     }
-                    .contentShape(.rect)
                 }
+                .contentShape(.rect)
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("airport-longest-route")
             } else if library.isPreparingObservedRoutes {
                 Label("最远航线 · 正在读取资料", systemImage: "arrow.up.right.circle")
                     .font(AtlasTypography.font(.subheadline))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Label("最远航线 · 暂无可核实的航线记录", systemImage: "arrow.up.right.circle")
                     .font(AtlasTypography.font(.subheadline))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("airport-longest-route-unavailable")
             }
         }
         .padding(.horizontal, 17)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity)
-        .background(.bar)
+        .padding(.vertical, palette.isDark ? 8 : 10)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .background(palette.subtle)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(palette.line).frame(height: 1).allowsHitTesting(false)
+        }
+    }
+
+    private func routeTitle(_ route: FlightRoute, endpoint: Airport) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(route.hasVerifiedNonstop ? "已收录最远直飞" : "已收录最远航线")
+                .font(AtlasTypography.font(.caption, weight: .semibold))
+                .foregroundStyle(palette.muted)
+            Text("\(endpoint.displayName) · \(endpoint.displayCode)")
+                .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                .foregroundStyle(palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func distanceReadout(_ km: Double) -> some View {
+        Text(displayDistance(km))
+            .font(palette.readout(.title3))
+            .monospacedDigit()
+            .foregroundStyle(palette.accent)
+    }
+
+    @ViewBuilder
+    private func routeEvidence(_ route: FlightRoute) -> some View {
+        if let item = route.observedStatistics?.first {
+            Text("实飞 · \(item.observation.period)")
+                .font(AtlasTypography.font(.caption))
+                .foregroundStyle(palette.muted)
+        } else {
+            RouteStatusBadge(route: route, day: FlightCalendar.isoDate(.now))
+        }
     }
 }
 
@@ -148,6 +185,9 @@ struct FlightRouteList<Trailing: View>: View {
     @State private var query = ""
     @State private var filter = RecordFilter.all
     @FocusState private var searchFocused: Bool
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     private var periodDay: String { FlightCalendar.isoDate(selectedDate) }
 
@@ -254,6 +294,7 @@ struct FlightRouteList<Trailing: View>: View {
                 ForEach(records) { route in
                     Button { picked = route } label: { RouteRow(route: route, library: library, day: day) }
                         .buttonStyle(.plain)
+                        .listRowBackground(palette.surface)
                         .accessibilityIdentifier("route-\(route.flightNumber ?? "\(route.origin)-\(route.destination)")")
                 }
             } header: {
@@ -262,6 +303,9 @@ struct FlightRouteList<Trailing: View>: View {
             }
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(palette.page)
+        .foregroundStyle(palette.ink)
         .scrollDismissesKeyboard(.interactively)
         .sheet(item: $picked) { route in
             NavigationStack {
@@ -290,6 +334,9 @@ private struct RouteRow: View {
     let route: FlightRoute
     let library: AtlasLibrary
     let day: String
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -312,8 +359,9 @@ private struct RouteRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 9)
+        .padding(.vertical, palette.isDark ? 7 : 11)
         .contentShape(.rect)
+        .frame(minHeight: 44)
     }
 
     private var endpoints: some View {
@@ -321,7 +369,7 @@ private struct RouteRow: View {
             leg(route.origin)
             Image(systemName: route.observedStatistics == nil ? "airplane" : "arrow.left.arrow.right")
                 .font(AtlasTypography.font(.caption).weight(.semibold))
-                .foregroundStyle(.teal)
+                .foregroundStyle(palette.accent)
                 .accessibilityHidden(true)
             leg(route.destination)
         }
@@ -335,7 +383,7 @@ private struct RouteRow: View {
             if let airport = library.airport(code) {
                 Text(airport.displayName)
                     .font(AtlasTypography.font(.subheadline))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
                     .lineLimit(2)
             }
         }
@@ -348,14 +396,14 @@ private struct RouteRow: View {
                 if let flights = observation.flights {
                     Text("统计期记录 \(flights.formatted()) 班")
                         .font(AtlasTypography.font(.caption))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                 }
             } else {
                 Text([route.airline, route.flightNumber].compactMap { $0 }.joined(separator: " · "))
                     .font(AtlasTypography.font(.subheadline).weight(.semibold))
                 Text(route.displayAircraftName)
                     .font(AtlasTypography.font(.caption))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
             }
         }
     }
@@ -366,7 +414,7 @@ private struct RouteRow: View {
             if let time = localTimeLabel(for: route) {
                 Text(time)
                     .font(AtlasTypography.font(.caption2).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(palette.muted)
             }
         }
     }
@@ -390,18 +438,21 @@ private struct RouteRow: View {
 private struct RouteStatusBadge: View {
     let route: FlightRoute
     let day: String
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         if let status = route.status {
             let coversDate = route.isPublishedPlan(on: day)
             let caption = status == "计划班表" && !coversDate ? "班表未覆盖所选日期" : status
-            let tint = coversDate ? Color.teal : Color.secondary
+            let tint = coversDate ? palette.selectionInk : palette.muted
             Text(caption)
                 .font(AtlasTypography.font(.caption2).weight(.semibold))
                 .foregroundStyle(tint)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(tint.opacity(0.12), in: .capsule)
+                .background(coversDate ? palette.selection : palette.subtle, in: .capsule)
         }
     }
 }
@@ -427,6 +478,9 @@ struct RouteDetail: View {
     let openAircraft: ((AircraftProfile) -> Void)?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
     @State private var showFlightDetails = false
 
     private var origin: Airport? { library.airport(route.origin) }
@@ -466,7 +520,7 @@ struct RouteDetail: View {
                     }
                     if let asOf = route.updatedAt {
                         Text("资料核对日期 \(asOf) · 计划机型可能因航班调整而变化。")
-                            .font(AtlasTypography.font(.footnote)).foregroundStyle(.secondary)
+                            .font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
                     }
                 }
                 .frame(maxWidth: 1050, alignment: .leading)
@@ -474,6 +528,8 @@ struct RouteDetail: View {
                 .padding(.vertical, 18)
                 .frame(maxWidth: .infinity)
             }
+            .background(palette.page)
+            .foregroundStyle(palette.ink)
             .accessibilityIdentifier("route-detail")
         }
         .navigationTitle(route.flightNumber ?? "航线详情")
@@ -509,7 +565,7 @@ struct RouteDetail: View {
                 endpoint(airport: origin, fallbackCode: route.origin)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: route.observedStatistics == nil ? "airplane" : "arrow.left.arrow.right")
-                    .foregroundStyle(.teal)
+                    .foregroundStyle(palette.accent)
                     .padding(.top, 12)
                     .accessibilityHidden(true)
                 endpoint(airport: destination, fallbackCode: route.destination)
@@ -522,7 +578,7 @@ struct RouteDetail: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: .rect(cornerRadius: 18))
+        .atlasPanel(palette)
     }
 
     private var facts: some View {
@@ -541,7 +597,7 @@ struct RouteDetail: View {
             .font(AtlasTypography.font(.subheadline))
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: .rect(cornerRadius: 15))
+            .atlasPanel(palette)
         }
         .accessibilityIdentifier("route-facts")
     }
@@ -551,7 +607,7 @@ struct RouteDetail: View {
             Text(route.airline).font(AtlasTypography.font(.headline))
             VStack(alignment: .leading, spacing: 3) {
                 Text(route.status == "计划班表" ? "计划机型" : "资料所列机型")
-                    .font(AtlasTypography.font(.caption)).foregroundStyle(.secondary)
+                    .font(AtlasTypography.font(.caption)).foregroundStyle(palette.muted)
                 Text([route.displayAircraftName, route.aircraftVariant].compactMap { $0 }.joined(separator: " · "))
                     .font(AtlasTypography.font(.subheadline))
             }
@@ -571,16 +627,16 @@ struct RouteDetail: View {
     private func observedFacts(_ evidence: [FlightRoute.ObservedStatistics]) -> some View {
         VStack(alignment: .leading, spacing: 13) {
             Text("连接两座机场的历史记录，按来源与统计期展示。")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(palette.muted)
             ForEach(evidence, id: \.self) { item in
                 let observation = item.observation
                 VStack(alignment: .leading, spacing: 5) {
                     Text(observation.period).font(AtlasTypography.font(.headline))
-                    Text(item.source.title).foregroundStyle(.secondary)
+                    Text(item.source.title).foregroundStyle(palette.muted)
                     Text(observation.verifiedNonstop == true ? "有不经停记录" : "经停情况未核实")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                     if let note = observation.note {
-                        Text(note).foregroundStyle(.secondary)
+                        Text(note).foregroundStyle(palette.muted)
                     }
                     if let source = observation.verificationURL, let url = URL(string: source) {
                         Link("不经停查核来源", destination: url)
@@ -605,8 +661,8 @@ struct RouteDetail: View {
         Map {
             MapPolyline(coordinates: [origin.coordinate, destination.coordinate], contourStyle: .geodesic)
                 .stroke(.mint, lineWidth: 3)
-            Marker(origin.displayCode, coordinate: origin.coordinate).tint(.teal)
-            Marker(destination.displayCode, coordinate: destination.coordinate).tint(.teal)
+            Marker(origin.displayCode, coordinate: origin.coordinate).tint(palette.accent)
+            Marker(destination.displayCode, coordinate: destination.coordinate).tint(palette.accent)
         }
         .mapStyle(.imagery(elevation: .flat))
         .frame(height: height)
@@ -622,7 +678,7 @@ struct RouteDetail: View {
                     Text(airport.displayCode).font(.system(.title, design: .monospaced, weight: .bold))
                     Text(airport.displayName)
                         .font(AtlasTypography.font(.subheadline))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                 }
                 .contentShape(.rect)
             }

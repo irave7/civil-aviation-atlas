@@ -168,7 +168,8 @@ struct AircraftDetail: View {
                     ModelWorkspace(
                         model: model, title: profile.displayName,
                         subtitle: "涂装 \(livery.name) · 客舱 \(configuration.airline) / \(configuration.name)",
-                        expandsSplitZoom: true, startsWithPartsVisible: false
+                        expandsSplitZoom: true, startsWithPartsVisible: false,
+                        liveryName: livery.name, chooseLivery: { choosingLivery = true }
                     )
                     .id("\(configuration.id)/\(livery.id)")
                 } else {
@@ -407,6 +408,9 @@ private struct AircraftLiveryPicker: View {
 
 private struct AirportOverview: View {
     let airport: Airport
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     private var runways: [Runway] {
         AirportSiteCatalog.runwayRecords(for: airport)
@@ -428,27 +432,27 @@ private struct AirportOverview: View {
             VStack(alignment: .leading, spacing: 23) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(airport.displayCode)  /  \(airport.icao)")
-                        .font(AtlasTypography.font(.subheadline).monospaced().weight(.semibold)).foregroundStyle(.teal)
+                        .font(palette.readout(.headline)).foregroundStyle(palette.accent)
                     Text(airport.displayName)
                         .font(AtlasTypography.font(.largeTitle).bold())
                         .accessibilityIdentifier("airport-localized-title")
                     Text(airport.name == airport.displayName ? airport.displayCity : airport.name)
-                        .font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                        .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                         .accessibilityIdentifier("airport-original-title")
                     if airport.localizedNameSource == "参考译名" {
                         Text("参考译名")
                             .font(AtlasTypography.font(.caption))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(palette.muted)
                     }
                     if let civilUse = airport.civilUse {
                         let classification = [civilUse, airport.publicAccess].compactMap { $0 }.joined(separator: " · ")
                         Label(classification, systemImage: "airplane")
                             .font(AtlasTypography.font(.subheadline, weight: .semibold))
-                            .foregroundStyle(.teal)
+                            .foregroundStyle(palette.accent)
                             .accessibilityIdentifier("airport-civil-use")
                     }
                     if let operatingStatus = airport.operatingStatus {
-                        Text(operatingStatus).font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                        Text(operatingStatus).font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                     }
                 }
                 if let description = airport.description { Text(description).lineSpacing(4) }
@@ -469,7 +473,7 @@ private struct AirportOverview: View {
                                 Text(runway.id).font(.system(.body, design: .monospaced, weight: .semibold))
                                 Spacer()
                                 if let surface = runway.surface {
-                                    Text(surface).font(AtlasTypography.font(.footnote)).foregroundStyle(.secondary)
+                                    Text(surface).font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
                                 }
                                 Text("\(runway.lengthM.formatted(.number.precision(.fractionLength(0)))) m")
                                     .monospacedDigit()
@@ -481,7 +485,7 @@ private struct AirportOverview: View {
                     Text(DistributionPolicy.mapsAvailable && DistributionPolicy.airportSiteModelsAvailable
                          ? "公开目录尚未收录此机场的跑道尺寸。可在实景页查看卫星影像。"
                          : "公开目录尚未收录此机场的跑道尺寸。")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                 }
                 if let terminals = airport.terminals, !terminals.isEmpty {
                     VStack(alignment: .leading, spacing: 13) {
@@ -489,21 +493,26 @@ private struct AirportOverview: View {
                         ForEach(terminals) { terminal in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(terminal.name).font(AtlasTypography.font(.headline))
-                                Text(terminal.description).foregroundStyle(.secondary)
+                                Text(terminal.description).foregroundStyle(palette.muted)
                             }
                         }
                     }
                 }
                 SourceLinks(sources: sources)
             }
+            .foregroundStyle(palette.ink)
             .atlasReadingWidth()
         }
+        .background(palette.page)
     }
 }
 
 private struct AtlasPanelBar<Content: View>: View {
     @ViewBuilder let content: (Bool) -> Content
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         Group {
@@ -514,10 +523,8 @@ private struct AtlasPanelBar<Content: View>: View {
                 }
             } else {
                 ScrollView(.horizontal) {
-                    GlassEffectContainer(spacing: 8) {
-                        HStack(spacing: 7) { content(false) }
-                            .padding(.horizontal, 15)
-                    }
+                    HStack(spacing: 9) { content(false) }
+                        .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollIndicators(.hidden)
@@ -525,7 +532,10 @@ private struct AtlasPanelBar<Content: View>: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .background(.bar)
+        .background(palette.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(palette.line).frame(height: 1).allowsHitTesting(false)
+        }
     }
 
     private var compactPanels: some View {
@@ -542,36 +552,38 @@ private struct PanelButton: View {
     let id: String
     let compact: Bool
     let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        if compact {
-            Button(action: action) {
-                VStack(spacing: 3) {
-                    Image(systemName: symbol).font(AtlasTypography.font(.body, weight: .semibold))
-                    Text(title).font(AtlasTypography.font(.caption, weight: .medium))
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .foregroundStyle(selected ? Color.teal : Color.secondary)
-                .padding(.horizontal, 8)
-                .frame(minWidth: 44, minHeight: 48)
-                .background(selected ? Color.teal.opacity(0.10) : .clear, in: .rect(cornerRadius: 12))
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title)
-            .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityIdentifier(id)
-        } else {
-            glassButton
-        }
-    }
-
-    private var glassButton: some View {
+        let palette = AtlasPalette(scheme, contrast: contrast)
         Button(action: action) {
-            Label(title, systemImage: symbol)
+            Group {
+                if compact {
+                    VStack(spacing: 3) {
+                        Image(systemName: symbol).font(AtlasTypography.font(.body, weight: .semibold))
+                        Text(title).font(AtlasTypography.font(.caption, weight: .semibold))
+                    }
+                } else {
+                    Label(title, systemImage: symbol)
+                        .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(selected ? palette.selectionInk : palette.muted)
+            .padding(.horizontal, compact ? 8 : 15)
+            .frame(minWidth: 44, minHeight: compact ? 48 : 44)
+            .background(selected ? palette.selection : .clear,
+                        in: .rect(cornerRadius: palette.isDark ? 9 : 17))
+            .overlay(alignment: .bottom) {
+                if selected && palette.isDark {
+                    Capsule().fill(palette.accent).frame(height: 2).padding(.horizontal, 8)
+                }
+            }
+            .contentShape(.rect)
         }
-        .buttonStyle(.glass)
-        .tint(selected ? .teal : nil)
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier(id)
     }
@@ -588,16 +600,19 @@ struct AtlasFact: View {
     let label: String
     let value: String
     let symbol: String
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(label, systemImage: symbol)
-                .font(AtlasTypography.font(.footnote)).foregroundStyle(.secondary)
-            Text(value).font(AtlasTypography.font(.title3).weight(.semibold).monospacedDigit())
+                .font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
+            Text(value).font(palette.readout(.title3)).monospacedDigit().foregroundStyle(palette.ink)
                 .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(13)
-        .background(.quaternary, in: .rect(cornerRadius: 15))
+        .atlasPanel(palette)
     }
 }

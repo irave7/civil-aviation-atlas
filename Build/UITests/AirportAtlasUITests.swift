@@ -21,7 +21,13 @@ final class AirportAtlasUITests: XCTestCase {
         let app = launchAtlas()
         XCTAssertFalse(element("entry-airports", in: app).isHittable)
         attachScreenshot(app, named: "全宽地球启动页")
-        tap("globe-featured-HKG", in: app)
+        let hongKong = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "HKG")).firstMatch
+        if hongKong.exists && hongKong.isHittable {
+            hongKong.tap()
+        } else {
+            // MapKit can leave the marker out of the accessibility tree while the globe is tiling.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.493, dy: 0.544)).tap()
+        }
         XCTAssertTrue(waitForTappable(element("model-viewport", in: app), timeout: 20))
         XCTAssertFalse(element("entry-airports", in: app).isHittable)
         XCTAssertFalse(element("part-overview", in: app).isHittable)

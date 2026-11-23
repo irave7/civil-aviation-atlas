@@ -380,11 +380,15 @@ struct FlightSimulatorSession: View {
                     .onEnded { value in exteriorZoom = boundedExteriorZoom(exteriorZoom * value.magnification) })
                 .accessibilityHidden(true)
         }
-        .overlay(alignment: .topTrailing) {
-            if !separate { exteriorZoomButton.padding(.trailing, 8) }
-        }
-        .overlay(alignment: .topLeading) {
-            if !separate { exteriorTelemetry.padding(10) }
+        .overlay(alignment: .top) {
+            if !separate {
+                HStack(alignment: .top, spacing: 4) {
+                    exteriorTelemetry.padding([.top, .leading], 10)
+                        .allowsHitTesting(false)
+                    exteriorZoomButton
+                }
+                .padding(.trailing, 8)
+            }
         }
     }
 
@@ -403,6 +407,7 @@ struct FlightSimulatorSession: View {
                 .padding(.vertical, 5)
                 .background(.black.opacity(0.68), in: .capsule)
                 .frame(minWidth: 52, minHeight: 44)
+                .contentShape(.interaction, .rect)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("机外跟拍倍率")

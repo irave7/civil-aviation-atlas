@@ -125,7 +125,14 @@ final class FlightExteriorCameraUITests: XCTestCase {
         exterior.pinch(withScale: 3.2, velocity: 2)
         wait(for: "横屏离地近端边界") { zoom.value as? String == "1.18" }
         screenshot("初始爬升 · 横屏机外最近视距")
-        tap(zoom, description: "恢复标准机外视距")
+        XCTAssertTrue(zoom.exists && zoom.isEnabled)
+        XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(zoom.frame))
+        XCTAssertGreaterThanOrEqual(zoom.frame.height, 44)
+        let diagnostic = XCTAttachment(string: "按钮 \(zoom.frame)，自动命中 \(zoom.isHittable)，应用 \(app.frame)\n\(app.debugDescription)")
+        diagnostic.name = "横屏倍率按钮命中"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+        zoom.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         wait(for: "标准取景") { zoom.value as? String == "1.00" }
     }
 

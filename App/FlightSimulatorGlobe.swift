@@ -103,7 +103,6 @@ private struct FlightSimulatorRouteMap: View, Equatable {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var camera: FlightSimulatorMapCamera
     @State private var viewpoint: Viewpoint = .overview
     @State private var viewportSize = CGSize(width: 390, height: 235)
@@ -296,10 +295,18 @@ private struct FlightSimulatorRouteMap: View, Equatable {
     }
 
     private func aircraftWidth(in size: CGSize) -> CGFloat {
-        guard aircraft != nil else { return 32 }
-        let compact = UIDevice.current.userInterfaceIdiom == .phone || horizontalSizeClass == .compact || size.width < 440
-        let ideal = compact ? min(115, max(96, size.width * 0.26)) : min(148, max(128, size.width * 0.19))
-        return min(ideal, size.height * 0.84)
+        guard let profile = aircraft?.profile else { return 32 }
+        let shortSide = max(1, min(size.width, size.height))
+        let extent = max(profile.wingspanM, profile.lengthM)
+        let typeWeight = pow(min(2, max(0.45, extent / 40)), 0.14)
+        let minimum = min(shortSide * 0.29, min(84, max(56, shortSide * 0.19)) * typeWeight)
+        let maximum = max(minimum, min(shortSide * 0.49, size.width * 0.39, 182))
+        // The top-down model occupies about two thirds of its transparent rendering surface.
+        let physical = max(profile.lengthM * projection.courseScale, profile.wingspanM * projection.spanScale) / 0.65
+        let range = maximum - minimum
+        guard range > 0, physical.isFinite else { return minimum }
+        // A smooth shoulder keeps the aircraft readable at globe scale and leaves runway context at street scale.
+        return minimum + range * tanh(max(0, hypot(minimum, physical) - minimum) / range)
     }
 
     private func aircraftBadge(heading: Double, width: CGFloat) -> some View {
@@ -450,6 +457,8 @@ private struct FlightSimulatorMapProjection: Equatable {
     var destination: CGPoint?
     var aircraft: CGPoint?
     var heading = 0.0
+    var courseScale = 0.0
+    var spanScale = 0.0
 }
 
 // Use the native canvas for the route and point conversion, including in a pitched globe view.
@@ -639,15 +648,20 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
             let trueHeading = parent.groundPose?.heading ?? arc.heading(at: fraction)
             let observer = FlightSimulatorArc.Observer(camera: mapCamera)
             let aircraft = visiblePoint(for: coordinate, on: map, observer: observer)
-            let heading = aircraft.map {
-                projectedHeading(from: $0, at: coordinate, course: trueHeading,
-                                 on: map, observer: observer, camera: mapCamera)
-            } ?? trueHeading - camera.heading
+            let body = aircraft.flatMap {
+                projectedAxis(at: coordinate, course: trueHeading, on: map, observer: observer, camera: mapCamera, center: $0)
+            }
+            let wing = aircraft.flatMap {
+                projectedAxis(at: coordinate, course: trueHeading + 90, on: map, observer: observer, camera: mapCamera, center: $0)
+            }
+            let heading = body?.heading ?? trueHeading - camera.heading
             let projection = FlightSimulatorMapProjection(
                 origin: visiblePoint(for: parent.origin, on: map, observer: observer),
                 destination: visiblePoint(for: parent.destination, on: map, observer: observer),
                 aircraft: aircraft,
-                heading: (heading * 4).rounded() / 4
+                heading: (heading * 4).rounded() / 4,
+                courseScale: ((body?.pointsPerMeter ?? 0) * 1_000).rounded() / 1_000,
+                spanScale: ((wing?.pointsPerMeter ?? 0) * 1_000).rounded() / 1_000
             )
             queuedProjection = projection
             guard !hasPendingDelivery, deliveredProjection != projection else { return }
@@ -662,9 +676,10 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
             }
         }
 
-        private func projectedHeading(from center: CGPoint, at coordinate: CLLocationCoordinate2D, course: Double,
-                                      on map: MKMapView, observer: FlightSimulatorArc.Observer, camera: MapCamera) -> Double {
-            let distance = max(12, min(26_000, camera.distance * 0.004))
+        private func projectedAxis(at coordinate: CLLocationCoordinate2D, course: Double, on map: MKMapView,
+                                   observer: FlightSimulatorArc.Observer, camera: MapCamera,
+                                   center: CGPoint) -> (heading: Double, pointsPerMeter: Double)? {
+            let distance = max(0.2, min(26_000, camera.distance * 0.004))
             let ahead = FlightSimulatorArc.offset(from: coordinate, course: course, meters: distance)
             let behind = FlightSimulatorArc.offset(from: coordinate, course: course + 180, meters: distance)
             let limit = max(14, min(map.bounds.width, map.bounds.height) * 0.12)
@@ -677,12 +692,14 @@ private struct FlightSimulatorNativeMap: UIViewRepresentable {
                 return separation.isFinite && separation <= limit ? projected : nil
             }
 
-            let before = probe(behind) ?? center
-            let after = probe(ahead) ?? center
-            let dx = after.x - before.x
-            let dy = after.y - before.y
-            guard hypot(dx, dy) > 0.02 else { return course - camera.heading }
-            return atan2(dy, dx) * 180 / .pi + 90
+            let before = probe(behind)
+            let after = probe(ahead)
+            let dx = (after ?? center).x - (before ?? center).x
+            let dy = (after ?? center).y - (before ?? center).y
+            let separation = hypot(dx, dy)
+            guard separation > 0.02 else { return nil }
+            let meters = before != nil && after != nil ? distance * 2 : distance
+            return (atan2(dy, dx) * 180 / .pi + 90, separation / meters)
         }
 
         private func visiblePoint(for coordinate: CLLocationCoordinate2D, on map: MKMapView,

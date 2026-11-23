@@ -56,6 +56,7 @@ struct FlightExploration: View {
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var routeMode = ExplorationRouteMode.custom
     @State private var scope = ExplorationScope.mainland
     @State private var originID = "SHA"
@@ -70,21 +71,14 @@ struct FlightExploration: View {
         let origins = availableOrigins.flatMap { $0.scope == scope ? $0.airports : nil }
         ScrollView {
             VStack(alignment: .leading, spacing: palette.contentGap + 8) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("航线探索")
-                        .font(AtlasTypography.font(.largeTitle, weight: palette.isDark ? .semibold : .bold))
-                        .foregroundStyle(palette.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("选择航程，在同一套驾驶舱中导览或手动飞行。")
-                        .font(AtlasTypography.font(.subheadline))
-                        .foregroundStyle(palette.muted)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 20) {
+                        routeTitle
+                        Spacer(minLength: 12)
+                        routeModePicker.frame(width: 220)
+                    }
+                    VStack(alignment: .leading, spacing: 12) { routeTitle; routeModePicker }
                 }
-                Picker("航线模式", selection: $routeMode) {
-                    ForEach(ExplorationRouteMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("exploration-route-mode")
-
                 if routeMode == .challenge {
                     FlightChallengeBrowser(library: library) { challenge, leg in
                         selection = Selection(leg: leg, challenge: challenge)
@@ -103,6 +97,7 @@ struct FlightExploration: View {
             }
             .atlasReadingWidth()
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(palette.page)
         .tint(palette.accent)
         .accessibilityIdentifier("flight-exploration")
@@ -142,36 +137,71 @@ struct FlightExploration: View {
         }
     }
 
+    private var routeTitle: some View {
+        Text("航线探索")
+            .font(AtlasTypography.font(.title, weight: .bold))
+            .foregroundStyle(palette.ink)
+            .fixedSize(horizontal: true, vertical: true)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var routeModePicker: some View {
+        Picker("航线模式", selection: $routeMode) {
+            ForEach(ExplorationRouteMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("exploration-route-mode")
+    }
+
     private func departureButton(for origin: Airport?) -> some View {
         Button {
             picksOrigin = true
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "airplane.departure")
-                    .foregroundStyle(palette.selectionInk)
-                    .font(.title3)
-                    .padding(12)
-                    .background(palette.selection, in: .rect(cornerRadius: 10))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("出发机场")
-                        .font(AtlasTypography.font(.caption))
-                        .foregroundStyle(palette.muted)
-                    Text(origin.map { "\($0.displayCode) · \($0.displayName)" } ?? "选择机场")
-                        .font(AtlasTypography.font(.headline))
-                        .foregroundStyle(palette.ink)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Label("出发机场", systemImage: "airplane.departure")
+                        .font(AtlasTypography.font(.subheadline, weight: .medium))
+                        .foregroundStyle(palette.stageMuted)
+                    if let origin {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 13) {
+                                originCode(origin)
+                                originName(origin).fixedSize()
+                            }
+                            VStack(alignment: .leading, spacing: 3) { originCode(origin); originName(origin) }
+                        }
+                    } else {
+                        Text("选择机场").font(AtlasTypography.font(.headline)).foregroundStyle(palette.stageInk)
+                    }
                 }
-                Spacer()
+                Spacer(minLength: 2)
                 Image(systemName: "chevron.up.chevron.down")
-                    .foregroundStyle(palette.muted)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(palette.stageAccent)
+                    .frame(width: 34, height: 34)
+                    .background(palette.stageMuted.opacity(0.14), in: .circle)
                     .accessibilityHidden(true)
             }
-            .padding(palette.isDark ? 13 : 16)
-            .atlasPanel(palette)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 17)
+            .padding(.vertical, 14)
+            .background(palette.stage, in: .rect(cornerRadius: palette.corner))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("exploration-origin")
+    }
+
+    private func originCode(_ airport: Airport) -> some View {
+        Text(airport.displayCode)
+            .font(.system(.largeTitle, design: .rounded, weight: .bold))
+            .foregroundStyle(palette.stageAccent)
+    }
+
+    private func originName(_ airport: Airport) -> some View {
+        Text(airport.displayName)
+            .font(AtlasTypography.font(.headline, weight: .medium))
+            .foregroundStyle(palette.stageInk)
     }
 
     @ViewBuilder
@@ -182,10 +212,18 @@ struct FlightExploration: View {
             leg.end.nameSearchTerms.contains { $0.localizedStandardContains(search) }
         }
         VStack(alignment: .leading, spacing: 12) {
-            Text("目的地")
-                .font(AtlasTypography.font(.title2, weight: .bold))
-                .foregroundStyle(palette.ink)
-                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("目的地")
+                    .font(AtlasTypography.font(.title2, weight: .bold))
+                    .foregroundStyle(palette.ink)
+                    .accessibilityAddTraits(.isHeader)
+                if !available.isEmpty {
+                    Text("\(matches.count)")
+                        .font(.system(.headline, design: .rounded, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(palette.muted)
+                        .accessibilityLabel("\(matches.count) 个目的地")
+                }
+            }
             if available.count > 7 {
                 TextField("搜索目的地或机场代码", text: $destinationFilter)
                     .textFieldStyle(.roundedBorder)
@@ -197,38 +235,40 @@ struct FlightExploration: View {
                     systemImage: "airplane.arrival"
                 )
             }
-            LazyVStack(spacing: palette.isDark ? 6 : 9) {
+            LazyVGrid(columns: [GridItem(typeSize.isAccessibilitySize ? .flexible() : .adaptive(minimum: 310),
+                                          spacing: 10, alignment: .topLeading)], alignment: .leading, spacing: 10) {
                 ForEach(matches) { leg in
                     Button {
                         selection = Selection(leg: leg, challenge: nil)
                     } label: {
-                        HStack(spacing: 12) {
-                            Text(leg.end.displayCode)
-                                .font(.system(.headline, design: .monospaced).weight(.semibold))
-                                .foregroundStyle(palette.accent)
-                                .frame(minWidth: 44, alignment: .leading)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(leg.end.displayName)
-                                    .font(AtlasTypography.font(.subheadline, weight: .semibold))
-                                    .foregroundStyle(palette.ink)
-                                if let model = leg.aircraftProfile, let livery = leg.aircraftLivery, let airline = livery.operatorName {
-                                    Text("\(airline) · \(model.displayName)")
-                                        .font(AtlasTypography.font(.caption))
-                                        .foregroundStyle(palette.muted)
-                                }
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                Text(leg.end.displayCode)
+                                    .font(.system(.title3, design: .rounded, weight: .bold))
+                                    .foregroundStyle(palette.accent)
+                                Spacer(minLength: 3)
+                                Text("\(Int(leg.distance.rounded()).formatted()) km")
+                                    .font(palette.readout(.footnote, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(palette.muted)
+                                    .accessibilityLabel("\(Int(leg.distance.rounded()).formatted()) 公里")
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(palette.muted)
+                                    .accessibilityHidden(true)
                             }
-                            Spacer()
-                            Text("\(Int(leg.distance.rounded()).formatted()) km")
-                                .font(palette.readout(.caption, weight: .medium).monospacedDigit())
-                                .foregroundStyle(palette.isDark ? palette.accent : palette.muted)
-                                .accessibilityLabel("\(Int(leg.distance.rounded()).formatted()) 公里")
-                            Image(systemName: "play.circle")
-                                .foregroundStyle(palette.accent)
-                                .accessibilityHidden(true)
+                            Text(leg.end.displayName)
+                                .font(AtlasTypography.font(.headline, weight: .semibold))
+                                .foregroundStyle(palette.ink)
+                            if let detail = leg.aircraftProfile.map({ "\(leg.evidence.airline) · \($0.displayName)" }) ?? leg.evidence.status {
+                                Text(detail)
+                                    .font(AtlasTypography.font(.footnote))
+                                    .foregroundStyle(palette.muted)
+                            }
                         }
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 12)
-                        .frame(minHeight: 48)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
                         .atlasPanel(palette)
                         .contentShape(.rect)
                     }

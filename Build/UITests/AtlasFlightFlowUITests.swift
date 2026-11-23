@@ -11,7 +11,7 @@ final class AtlasFlightFlowUITests: XCTestCase {
         let app = launchAtlas()
         openShanghaiToBeijing(in: app)
         tap("exploration-simulator-start", in: app)
-        wait(for: control("simulator-phase", in: app), labelContaining: "起飞滑跑")
+        wait(for: control("simulator-phase", in: app), labelContaining: "出发 SHA")
         let playback = control("simulator-pause", in: app)
         tap("simulator-pause", in: app)
         wait(for: playback, labelContaining: "继续")
@@ -27,7 +27,7 @@ final class AtlasFlightFlowUITests: XCTestCase {
         let mode = app.segmentedControls["simulator-pilot-style"].firstMatch
         tap(mode.buttons["手动操纵"].firstMatch, named: "手动操纵", in: app, scrolls: true)
         tap("exploration-simulator-start", in: app)
-        wait(for: control("simulator-phase", in: app), labelContaining: "起飞滑跑")
+        wait(for: control("simulator-phase", in: app), labelContaining: "出发 SHA")
         let throttle = app.sliders["simulator-throttle"].firstMatch
         reveal(throttle, in: app)
         XCTAssertTrue(throttle.isHittable && throttle.isEnabled)

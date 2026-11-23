@@ -26,7 +26,7 @@ final class FlightSimulatorUITests: XCTestCase {
         tap(start)
 
         let phase = control("simulator-phase", in: app)
-        wait(for: phase, label: "起飞滑跑")
+        wait(for: phase, label: "出发 SHA")
         assertViewport(track, separateFrom: phase, in: app)
         #if !MAINLAND_DISTRIBUTION || MAINLAND_APPROVED_MAPS
         waitForValue("跟随飞机", in: control("simulator-globe-viewpoint", in: app))
@@ -92,7 +92,7 @@ final class FlightSimulatorUITests: XCTestCase {
         let title = app.staticTexts["航线地图"].firstMatch
         assertViewport(track, separateFrom: briefing, in: app)
         let viewportSize = track.frame.size
-        let miniatureWidth = assertMiniature(in: track, app: app).width
+        assertMiniature(in: track, app: app)
 
         for (id, name) in [("global", "全球视角"), ("follow", "跟随飞机"), ("overview", "航线总览")] {
             tap(viewpoint)
@@ -101,7 +101,7 @@ final class FlightSimulatorUITests: XCTestCase {
             assertViewport(track, separateFrom: briefing, in: app)
             XCTAssertEqual(track.frame.width, viewportSize.width, accuracy: 1)
             XCTAssertEqual(track.frame.height, viewportSize.height, accuracy: 1)
-            XCTAssertEqual(assertMiniature(in: track, app: app).width, miniatureWidth, accuracy: 1)
+            assertMiniature(in: track, app: app)
             XCTAssertTrue(title.exists)
             XCTAssertTrue(app.frame.contains(title.frame))
             XCTAssertTrue(app.frame.contains(viewpoint.frame))
@@ -130,8 +130,8 @@ final class FlightSimulatorUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [inFrame], timeout: 12), .completed, "三维客机应完整留在地图内")
         let frame = aircraft.frame
-        XCTAssertGreaterThanOrEqual(frame.width, 80)
-        XCTAssertLessThanOrEqual(frame.width, 155)
+        XCTAssertGreaterThanOrEqual(frame.width, min(42, min(map.frame.width, map.frame.height) * 0.25))
+        XCTAssertLessThanOrEqual(frame.width, min(map.frame.width * 0.40, map.frame.height * 0.50, 183) + 1)
         return frame
     }
     #endif

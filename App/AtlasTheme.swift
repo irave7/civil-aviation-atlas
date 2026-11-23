@@ -78,18 +78,18 @@ struct AtlasPalette {
         increasedContrast = contrast == .increased
     }
 
-    var page: Color { pair(0xEEF1E9, 0x0B1D2A) }
-    var surface: Color { pair(0xFAFAF5, 0x102636) }
-    var subtle: Color { pair(0xE7EFE7, 0x142E40) }
+    var page: Color { pair(0xEDF3F0, 0x081A24) }
+    var surface: Color { pair(0xFBFDFB, 0x102A36) }
+    var subtle: Color { pair(0xE1EBE7, 0x163543) }
     var line: Color {
-        increasedContrast ? pair(0x70867F, 0x72909E) : pair(0xC8D8D0, 0x355163)
+        increasedContrast ? pair(0x70867F, 0x72909E) : pair(0xC2D3CE, 0x345563)
     }
-    var ink: Color { pair(0x162E2B, 0xE8F3F8) }
+    var ink: Color { pair(0x132E2C, 0xEDF7F7) }
     var muted: Color {
         increasedContrast ? pair(0x354E49, 0xC9DCE5) : pair(0x486460, 0xA9C1CE)
     }
     var accent: Color {
-        increasedContrast ? pair(0x004741, 0xA1FFE9) : pair(0x006860, 0x6BE4D3)
+        increasedContrast ? pair(0x004741, 0xA1FFE9) : pair(0x00665D, 0x7EE5D1)
     }
     var onAccent: Color { pair(0xFFFFFF, 0x062B2A) }
     var selection: Color { pair(0xD4EBE2, 0x1C434F) }
@@ -98,8 +98,8 @@ struct AtlasPalette {
     var stageInk: Color { Color(atlasHex: 0xEFF8FC) }
     var stageMuted: Color { Color(atlasHex: 0xBACED9) }
     var stageAccent: Color { Color(atlasHex: 0x89EBDD) }
-    var corner: CGFloat { isDark ? 13 : 20 }
-    var contentGap: CGFloat { isDark ? 12 : 18 }
+    var corner: CGFloat { 18 }
+    var contentGap: CGFloat { 16 }
 
     func readout(_ size: Font.TextStyle, weight: Font.Weight = .semibold) -> Font {
         .system(size, design: isDark ? .monospaced : .default, weight: weight)

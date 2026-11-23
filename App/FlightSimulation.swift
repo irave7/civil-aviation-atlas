@@ -239,8 +239,8 @@ struct FlightSimulation {
     private let destinationRunwayLength: Double?
     private let departureRunwayHeading: Double?
     private let destinationRunwayHeading: Double?
-    private let departureGround: FlightGroundRoute?
-    private let arrivalGround: FlightGroundRoute?
+    let departureGround: FlightGroundRoute?
+    let arrivalGround: FlightGroundRoute?
     private let departureTaxi: FlightTaxiPath?
     private var departureTaxiComplete = false
     private var arrivalTaxi: FlightTaxiPath?

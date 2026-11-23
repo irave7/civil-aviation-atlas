@@ -57,6 +57,54 @@ final class FlightVoiceInteractionUITests: XCTestCase {
         XCTAssertTrue(replay.isEnabled)
     }
 
+    func testPlayAndStopARecordedGuideInEachChapter() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        XCUIDevice.shared.orientation = .portrait
+        app.openAtlasExploration(category: "机场")
+        let selector = app.buttons["exploration-voice-style"].firstMatch
+        if selector.value as? String != "航程向导" {
+            tap(selector)
+            tap(app.buttons["AI 配音 · 航程向导"].firstMatch)
+        }
+        let domestic = app.segmentedControls["exploration-airport-region"].buttons["中国大陆"]
+        if domestic.exists && !domestic.isSelected { tap(domestic) }
+        let airport = app.buttons["flight-airport-listen-SHA"].firstMatch
+        if !airport.exists { tap(app.buttons["flight-airport-chapter-SHA"].firstMatch) }
+        checkRecording(airport, in: app.scrollViews["exploration-airport-scroll"].firstMatch)
+        tap(selector)
+        tap(app.buttons["AI 配音 · 航旅解说"].firstMatch)
+        XCTAssertEqual(selector.value as? String, "航旅解说")
+        checkRecording(airport, in: app.scrollViews["exploration-airport-scroll"].firstMatch)
+
+        app.selectExplorationCategory("机型")
+        let aircraft = app.buttons["exploration-aircraft-listen-c919"].firstMatch
+        if !aircraft.exists { tap(app.buttons["exploration-aircraft-mission-c919"].firstMatch) }
+        checkRecording(aircraft, in: app.scrollViews["exploration-aircraft-scroll"].firstMatch)
+
+        app.selectExplorationCategory("航线")
+        let challenges = app.segmentedControls["exploration-route-mode"].buttons["航线关卡"]
+        if !challenges.isSelected { tap(challenges) }
+        checkRecording(app.buttons["flight-challenge-listen-SHA-PEK"].firstMatch,
+                       in: app.scrollViews["flight-exploration"].firstMatch)
+    }
+
+    private func checkRecording(_ button: XCUIElement, in scroll: XCUIElement) {
+        bringIntoView(button, in: scroll)
+        XCTAssertEqual(button.label, "听 AI 导览")
+        tap(button)
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            button.label == "停止播放" && button.value as? String == "正在播放"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 6), .completed)
+        let caption = scroll.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "exploration-transcript-")).firstMatch
+        XCTAssertTrue(caption.exists)
+        tap(button)
+        XCTAssertEqual(button.label, "听 AI 导览")
+    }
+
     private func bringIntoView(_ target: XCUIElement, in scroll: XCUIElement) {
         for _ in 0..<6 {
             if target.exists && target.isHittable { return }

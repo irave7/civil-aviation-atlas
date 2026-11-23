@@ -72,6 +72,14 @@ final class ExplorationNarrator: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "aviation.atlas.narration", qos: .userInitiated)
     private let revision = OSAllocatedUnfairLock(initialState: 0)
+    private lazy var mandarinVoice: AVSpeechSynthesisVoice? = {
+        let regionDefault = AVSpeechSynthesisVoice(language: "zh-CN")
+        let installed = AVSpeechSynthesisVoice.speechVoices().filter {
+            $0.language.caseInsensitiveCompare("zh-CN") == .orderedSame
+        }
+        return installed.first { $0.quality == .premium }
+            ?? installed.first { $0.quality == .enhanced } ?? regionDefault
+    }()
     private var synthesizer: AVSpeechSynthesizer?
     private var player: AVAudioPlayer?
     private var playback: Playback?
@@ -81,17 +89,23 @@ final class ExplorationNarrator: @unchecked Sendable {
                audibleInSilentMode: Bool = false, routeRecording: URL? = nil, followedBy cabin: URL? = nil,
                observe: (@Sendable (Event) -> Void)? = nil,
                onCabinStarted: (@Sendable () -> Void)? = nil, onPlaybackStarted: (@Sendable () -> Void)? = nil) {
-        let recording = voice == .system ? nil : routeRecording ?? audioURL(for: cue, voice: voice)
-        begin(recording: recording, text: text, cabin: cabin, audibleInSilentMode: audibleInSilentMode,
+        let recording = voice == .system ? nil : routeRecording ?? Self.audioURL(for: cue, voice: voice)
+        begin(recording: recording, text: text, voice: voice, cabin: cabin, audibleInSilentMode: audibleInSilentMode,
               observe: observe, onPlaybackStarted: onPlaybackStarted, onCabinStarted: onCabinStarted)
     }
 
-    func speakAnswer(_ text: String, observe: @escaping @Sendable (Event) -> Void) {
-        begin(recording: nil, text: text, cabin: nil, audibleInSilentMode: true,
+    func speakAnswer(_ text: String, voice: ExplorationVoice, observe: @escaping @Sendable (Event) -> Void) {
+        begin(recording: nil, text: text, voice: voice, cabin: nil, audibleInSilentMode: true,
               observe: observe, onPlaybackStarted: nil, onCabinStarted: nil)
     }
 
-    private func begin(recording: URL?, text: String, cabin: URL?, audibleInSilentMode: Bool,
+    func preview(_ recording: URL?, transcript: String, voice: ExplorationVoice,
+                 observe: @escaping @Sendable (Event) -> Void) {
+        begin(recording: voice == .system ? nil : recording, text: transcript, voice: voice, cabin: nil,
+              audibleInSilentMode: true, observe: observe, onPlaybackStarted: nil, onCabinStarted: nil)
+    }
+
+    private func begin(recording: URL?, text: String, voice: ExplorationVoice, cabin: URL?, audibleInSilentMode: Bool,
                        observe: (@Sendable (Event) -> Void)?,
                        onPlaybackStarted: (@Sendable () -> Void)?, onCabinStarted: (@Sendable () -> Void)?) {
         let request = invalidate()
@@ -105,12 +119,18 @@ final class ExplorationNarrator: @unchecked Sendable {
             if let recording, playFile(recording, request: request) {
                 didBeginPart()
                 startMonitor()
-            } else if isCurrent(request), !text.isEmpty, let systemVoice = AVSpeechSynthesisVoice(language: "zh-CN") {
+            } else if isCurrent(request), !text.isEmpty, let systemVoice = mandarinVoice {
                 let engine = synthesizer ?? AVSpeechSynthesizer()
                 synthesizer = engine
-                let message = AVSpeechUtterance(string: text)
+                let message = AVSpeechUtterance(string: AviationSpeech.mandarin(text))
                 message.voice = systemVoice
-                message.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95
+                let pace: Float = switch voice {
+                case .captain: 0.91
+                case .story: 0.87
+                case .guide: 0.96
+                case .system: 1.0
+                }
+                message.rate = AVSpeechUtteranceDefaultSpeechRate * pace
                 engine.speak(message)
                 checkPlayback()
                 if playback != nil { startMonitor() }
@@ -148,9 +168,13 @@ final class ExplorationNarrator: @unchecked Sendable {
             guard isCurrent(request), playback?.revision == request, playback?.paused == true else { return }
             playback?.paused = false
             playback?.startupDeadline = ContinuousClock.now + .seconds(3)
-            if let player { player.play() } else { synthesizer?.continueSpeaking() }
-            if let current = playback, current.started { current.observer?(.playing(current.channel)) }
-            startMonitor()
+            let resumed = player?.play() ?? (synthesizer?.continueSpeaking() == true)
+            if resumed, let current = playback {
+                current.observer?(.playing(current.channel))
+                startMonitor()
+            } else {
+                advancePlayback(initiallyUnavailable: true)
+            }
         }
     }
 
@@ -173,7 +197,7 @@ final class ExplorationNarrator: @unchecked Sendable {
         }
     }
 
-    private func audioURL(for cue: ExplorationNarrationCue, voice: ExplorationVoice) -> URL? {
+    static func audioURL(for cue: ExplorationNarrationCue, voice: ExplorationVoice) -> URL? {
         let filename = "narration-\(voice.rawValue)-\(cue.rawValue)"
         let bundle = Bundle.main
         return bundle.url(forResource: filename, withExtension: "m4a")

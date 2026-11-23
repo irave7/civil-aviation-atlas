@@ -36,9 +36,9 @@ final class FlightSimulatorCockpitUITests: XCTestCase {
         XCTAssertTrue(cockpit.label.contains("C919"))
         #if !MAINLAND_DISTRIBUTION || MAINLAND_APPROVED_MAPS
         let terrain = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            cockpit.value as? String == "实景地形" && self.item("simulator-terrain-map", in: app).exists
+            cockpit.value as? String == "三维机场"
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [terrain], timeout: 24), .completed, "驾驶舱应显示渲染完成的机场影像")
+        XCTAssertEqual(XCTWaiter.wait(for: [terrain], timeout: 24), .completed, "驾驶舱应显示三维场景")
         #endif
 
         let controls = app.scrollViews["simulator-control-scroll"].firstMatch
@@ -61,7 +61,7 @@ final class FlightSimulatorCockpitUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [renderedAircraft], timeout: 15), .completed)
         #if !MAINLAND_DISTRIBUTION || MAINLAND_APPROVED_MAPS
-        XCTAssertTrue(item("simulator-terrain-map", in: app).waitForExistence(timeout: 24))
+        XCTAssertTrue(exterior.label.contains("三维机场"))
         #endif
         screenshot("C919 机外视角")
         tap(views.buttons["驾驶舱"].firstMatch)

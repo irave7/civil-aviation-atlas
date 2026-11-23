@@ -35,6 +35,9 @@ struct FlightSimulatorSession: View {
     @State private var routeVoice = FlightRouteVoice()
     @State private var sound = FlightSimulatorSound()
     @State private var sheet: Panel?
+    @State private var exteriorZoom: CGFloat = 1
+    @GestureState private var liveExteriorMagnification: CGFloat = 1
+    @State private var stageExpanded = false
     @State private var camera = Camera.map
     @State private var terrainReady: Camera?
     @State private var selectedProfile: AircraftProfile?
@@ -111,7 +114,7 @@ struct FlightSimulatorSession: View {
     private var activeRunwayName: String? { (isArrival ? endRunway : startRunway)?.id }
     private var allowsFlightAudio: Bool { sheet == nil || sheet?.id == Panel.voice.id }
     private var heightAboveGround: Double {
-        let fieldElevation = (isArrival ? leg.end.elevationFt : leg.start.elevationFt) ?? 0
+        let fieldElevation = (simulation.progress > 0.5 ? leg.end.elevationFt : leg.start.elevationFt) ?? 0
         return simulation.onGround ? 0 : max(0, (simulation.altitude - Double(fieldElevation)) * 0.3048)
     }
     private var activeCabinVoice: FlightCabinVoice? {
@@ -157,15 +160,20 @@ struct FlightSimulatorSession: View {
                 let size = viewport.size
                 let landscapeRoom = size.width >= 600 && size.width >= size.height * 1.40
                 let wide = landscapeRoom || (size.width >= 700 && size.width >= size.height && !typeSize.isAccessibilitySize)
+                let portraitStageHeight = camera == .exterior && typeSize.isAccessibilitySize
+                    ? min(510, max(210, size.height * 0.60)) : min(380, max(145, size.height * 0.46))
                 let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
                 layout {
                     stage
-                        .frame(maxWidth: .infinity, maxHeight: wide ? .infinity : nil)
-                        .frame(height: wide ? nil : min(380, max(145, size.height * 0.46)))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(height: wide || stageExpanded ? nil : portraitStageHeight)
                         .layoutPriority(1)
-                    controlPanel
-                        .background(palette.page)
-                        .frame(width: wide ? min(410, max(260, size.width * 0.34)) : nil)
+                    if !stageExpanded {
+                        controlPanel
+                            .background(palette.page)
+                            .frame(width: wide ? min(410, max(260, size.width * 0.34)) : nil)
+                            .transition(.opacity)
+                    }
                 }
             }
             .background(palette.page)
@@ -221,7 +229,7 @@ struct FlightSimulatorSession: View {
             }
         }
         .onChange(of: narrationCue) { _, _ in announce() }
-        .onChange(of: voice) { _, _ in announce() }
+        .onChange(of: voice) { _, _ in announce(sampleStyle: true) }
         .onChange(of: narration) { _, enabled in
             if enabled {
                 announce()
@@ -257,6 +265,7 @@ struct FlightSimulatorSession: View {
             if ground && simulation.phase == .landing { play(.touchdown) }
         }
         .onChange(of: simulation.phase) { _, phase in
+            if phase == .arrived { stageExpanded = false }
             if phase == .arrived, let challenge, simulation.summary?.landingRunwayExceeded == false {
                 completedChallenges = FlightChallengeProgress.completing(challenge.id, in: completedChallenges)
             }
@@ -269,16 +278,37 @@ struct FlightSimulatorSession: View {
 
     private var stage: some View {
         VStack(spacing: 0) {
-            if profile != nil {
-                Picker("飞行视角", selection: $camera) {
-                    ForEach(Camera.allCases) { view in Text(view.rawValue).tag(view) }
+            HStack(spacing: 8) {
+                if profile != nil {
+                    Picker("飞行视角", selection: $camera) {
+                        ForEach(Camera.allCases) { view in Text(view.rawValue).tag(view) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("simulator-camera")
+                } else {
+                    Label("航图", systemImage: "map")
+                        .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                    Spacer()
                 }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("simulator-camera")
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(palette.surface)
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
+                        stageExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: stageExpanded
+                          ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(palette.accent)
+                .accessibilityLabel(stageExpanded ? "显示飞行面板" : "展开飞行视图")
+                .accessibilityIdentifier("simulator-expand-stage")
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 2)
+            .background(palette.surface)
             stageScene
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
@@ -298,31 +328,124 @@ struct FlightSimulatorSession: View {
                 .allowsHitTesting(camera == .map)
                 .accessibilityHidden(camera != .map)
             if camera == .cockpit, let profile {
+                let airportFrame = localAirfield
                 FlightSimulatorCockpit(profile: profile, flight: simulation, runway: activeRunwayName,
-                                       taxiing: isTaxiing, showsTerrain: terrainReady == .cockpit) {
-                    terrain(for: .cockpit)
+                                       taxiing: isTaxiing, showsTerrain: airportFrame != nil || terrainReady == .cockpit,
+                                       showsAirfield: airportFrame != nil) {
+                    ZStack {
+                        if preloadsRegionalTerrain(airportFrame) { terrain(for: .cockpit) }
+                        if let airportFrame {
+                            aircraftScene(profile, field: airportFrame, cockpit: true)
+                                .opacity(airportFrame.visibility)
+                        }
+                    }
                 }
                     .transition(.opacity)
             } else if camera == .exterior, let profile {
-                ZStack {
-                    terrain(for: .exterior)
-                    FlightExplorationAircraft(profile: profile, livery: livery, progress: simulation.progress,
-                                              pitch: simulation.effectivePitch, bank: simulation.effectiveBank,
-                                              gearDown: simulation.gearDown, flaps: simulation.flaps,
-                                              showsBackdrop: terrainReady != .exterior,
-                                              altitudeMeters: heightAboveGround, speedKnots: simulation.groundSpeedKnots,
-                                              groundDistanceMeters: simulation.taxiDistanceM + simulation.runwayUsed + simulation.landingRollM)
-                        .allowsHitTesting(false)
-                        .accessibilityIdentifier("simulator-exterior-view")
-                        .zIndex(1)
-                }
-                .overlay(alignment: .top) {
-                    FlightExteriorOverlay(altitudeFeet: simulation.altitude, speedKnots: simulation.groundSpeedKnots)
-                        .padding(10)
+                GeometryReader { space in
+                    let separate = typeSize.isAccessibilitySize || space.size.height < 180
+                    VStack(spacing: 0) {
+                        if separate {
+                            HStack(spacing: 4) {
+                                exteriorTelemetry
+                                exteriorZoomButton
+                            }
+                            .padding(.horizontal, 6)
+                            .background(palette.surface)
+                        }
+                        exteriorWorld(profile, separate: separate)
+                    }
                 }
                 .transition(.opacity)
             }
         }
+    }
+
+    private func exteriorWorld(_ profile: AircraftProfile, separate: Bool) -> some View {
+        let field = localAirfield
+        return ZStack {
+            if preloadsRegionalTerrain(field) {
+                terrain(for: .exterior).allowsHitTesting(false)
+            }
+            aircraftScene(profile, field: field, separateSource: separate)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("simulator-exterior-view")
+        }
+        .overlay {
+            // The renderer and the regional imagery are behind the same gesture surface.
+            // An MKMapView introduced during climb must never take the chase-camera pinch.
+            Color.clear.contentShape(.rect)
+                .gesture(MagnifyGesture()
+                    .updating($liveExteriorMagnification) { value, live, _ in live = value.magnification }
+                    .onEnded { value in exteriorZoom = boundedExteriorZoom(exteriorZoom * value.magnification) })
+                .accessibilityHidden(true)
+        }
+        .overlay(alignment: .topTrailing) {
+            if !separate { exteriorZoomButton.padding(.trailing, 8) }
+        }
+        .overlay(alignment: .topLeading) {
+            if !separate { exteriorTelemetry.padding(10) }
+        }
+    }
+
+    private var exteriorTelemetry: some View {
+        FlightExteriorOverlay(altitudeFeet: simulation.altitude, speedKnots: simulation.groundSpeedKnots)
+    }
+
+    private var exteriorZoomButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.18)) { exteriorZoom = 1 }
+        } label: {
+            Label(String(format: "%.2f×", effectiveExteriorZoom), systemImage: "viewfinder")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.black.opacity(0.68), in: .capsule)
+                .frame(minWidth: 52, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("机外跟拍倍率")
+        .accessibilityValue(String(format: "%.2f", effectiveExteriorZoom))
+        .accessibilityHint("双指缩放，点按恢复标准视距")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: exteriorZoom = boundedExteriorZoom(exteriorZoom + 0.1)
+            case .decrement: exteriorZoom = boundedExteriorZoom(exteriorZoom - 0.1)
+            @unknown default: break
+            }
+        }
+        .accessibilityIdentifier("simulator-exterior-zoom")
+    }
+
+    private func boundedExteriorZoom(_ value: CGFloat) -> CGFloat {
+        value.isFinite ? min(1.18, max(0.72, value)) : 1
+    }
+
+    private var effectiveExteriorZoom: CGFloat { boundedExteriorZoom(exteriorZoom * liveExteriorMagnification) }
+
+    private func aircraftScene(_ profile: AircraftProfile, field: FlightAirfieldFrame?, cockpit: Bool = false, separateSource: Bool = false) -> some View {
+        FlightExplorationAircraft(profile: profile, livery: livery, progress: simulation.progress,
+                                  pitch: simulation.onGround ? 0 : simulation.effectivePitch,
+                                  bank: simulation.onGround ? 0 : simulation.effectiveBank,
+                                  gearDown: simulation.gearDown, flaps: simulation.flaps,
+                                  showsBackdrop: terrainReady != (cockpit ? .cockpit : .exterior),
+                                  altitudeMeters: heightAboveGround, field: field, cockpit: cockpit, followZoom: effectiveExteriorZoom,
+                                  separateSource: separateSource)
+    }
+
+    private var localAirfield: FlightAirfieldFrame? {
+        let arriving = simulation.progress > 0.5
+        return FlightAirfieldFrame(airport: arriving ? leg.end : leg.start,
+                                  runway: arriving ? endRunway : startRunway,
+                                  route: arriving ? simulation.arrivalGround : simulation.departureGround,
+                                  pose: sceneryPose, flight: simulation, altitudeMeters: heightAboveGround,
+                                  arriving: arriving)
+    }
+
+    private func preloadsRegionalTerrain(_ field: FlightAirfieldFrame?) -> Bool {
+        (field?.visibility ?? 0) < 1 || !simulation.onGround ||
+            (simulation.groundStage == .takeoffRoll && simulation.runwayUsed > 100)
     }
 
     @ViewBuilder
@@ -334,6 +457,9 @@ struct FlightSimulatorSession: View {
                 if camera == view { terrainReady = view }
             }
             .accessibilityHidden(terrainReady != view)
+            .onDisappear {
+                if terrainReady == view { terrainReady = nil }
+            }
         }
         #endif
     }
@@ -443,7 +569,8 @@ struct FlightSimulatorSession: View {
     private var flightControls: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(simulation.phase.title)
+                Text(simulation.groundStage == nil ? simulation.phase.title
+                     : (isArrival ? "抵达 \(leg.end.displayCode)" : "出发 \(leg.start.displayCode)"))
                     .font(AtlasTypography.font(.title2, weight: .bold))
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("simulator-phase")
@@ -471,10 +598,12 @@ struct FlightSimulatorSession: View {
                             rateButton
                             voiceButton
                         }
-                        VStack(alignment: .leading) {
-                            HStack {
-                                holdButton
-                                rateButton
+                        .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 8) {
+                            ViewThatFits(in: .horizontal) {
+                                HStack { holdButton; rateButton }
+                                    .fixedSize(horizontal: true, vertical: false)
+                                VStack(alignment: .leading) { holdButton; rateButton }
                             }
                             voiceButton
                         }
@@ -735,7 +864,7 @@ struct FlightSimulatorSession: View {
                         }
                         .pickerStyle(.menu)
                         .accessibilityIdentifier("simulator-voice-style")
-                        FlightVoiceDeck(interaction: voiceInteraction, narration: $narration, sound: sound,
+                        FlightVoiceDeck(interaction: voiceInteraction, narration: $narration, voice: voice, sound: sound,
                                         questions: FlightVoiceQuestion.flightQuestions(for: simulation,
                                                     origin: leg.start.displayName, destination: leg.end.displayName))
                     }
@@ -903,12 +1032,12 @@ struct FlightSimulatorSession: View {
         }
     }
 
-    private func announce() {
+    private func announce(sampleStyle: Bool = false) {
         guard narration, scenePhase == .active, allowsFlightAudio else { return }
         let cue = narrationCue
         let carrier = activeCabinVoice
-        let cabin = FlightCabinVoice.Phase(cue: cue).flatMap { carrier?.recording(for: $0) }
-        let localAudio = routeNarration
+        let cabin = sampleStyle ? nil : FlightCabinVoice.Phase(cue: cue).flatMap { carrier?.recording(for: $0) }
+        let localAudio = routeNarration && !sampleStyle
             ? (cue == .briefing ? challenge?.introductionAudio : nil) ?? routeVoice.recording(for: cue, leg: leg) : nil
         let localText = routeNarration
             ? (cue == .briefing ? challenge?.introduction : nil) ?? routeVoice.spokenText(for: cue, leg: leg) : nil

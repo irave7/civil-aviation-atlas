@@ -10,6 +10,9 @@ extension Airport {
 struct GlobeView: View {
     let library: AtlasLibrary
     let open: (Airport) -> Void
+    let favorites: AtlasFavorites
+    let openAircraft: (AircraftProfile) -> Void
+    let explore: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -23,9 +26,32 @@ struct GlobeView: View {
                         .font(AtlasTypography.font(.largeTitle, weight: .bold))
                         .foregroundStyle(palette.ink)
                         .accessibilityAddTraits(.isHeader)
-                    Text("从精选机场开始，或在目录中查找机场与航线。")
+                    Text("从机场资料开始，也可以进入探索，选择机场、机型或航线任务。")
                         .font(AtlasTypography.font(.body))
                         .foregroundStyle(palette.muted)
+                }
+                Button(action: explore) {
+                    Label("进入探索", systemImage: "safari")
+                        .font(AtlasTypography.font(.headline))
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.accent)
+                let saved = favorites.airportIDs.compactMap(library.airport).sorted { $0.displayCode < $1.displayCode }
+                let fleet = library.aircraft.filter { favorites.aircraftIDs.contains($0.id) }
+                if !saved.isEmpty || !fleet.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("我的收藏").font(AtlasTypography.font(.headline))
+                        ForEach(saved) { airport in
+                            GlobeCompactAirport(airport: airport, palette: palette, open: open)
+                        }
+                        ForEach(fleet) { profile in
+                            Button { openAircraft(profile) } label: {
+                                Label(profile.displayName, systemImage: "airplane").frame(minHeight: 44)
+                            }
+                        }
+                    }
                 }
                 if let first = library.featured.first {
                     GlobeAirportBrief(airport: first, palette: palette, open: open)
@@ -99,6 +125,9 @@ private enum GlobeAirportCategory {
 struct GlobeView: View {
     let library: AtlasLibrary
     let open: (Airport) -> Void
+    let favorites: AtlasFavorites
+    let openAircraft: (AircraftProfile) -> Void
+    let explore: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -183,17 +212,17 @@ struct GlobeView: View {
             let size = geometry.size
             let wide = UIDevice.current.userInterfaceIdiom == .pad && !typeSize.isAccessibilitySize
                 && size.width >= 730 && size.width >= size.height
-            let railWidth = min(278, max(218, size.width * 0.25))
+            let railWidth = min(345, max(265, size.width * 0.28))
 
             HStack(spacing: 0) {
-                if wide && !palette.isDark {
-                    featuredRail(width: railWidth, border: .trailing)
-                }
                 VStack(spacing: 0) {
-                    mapToolbar(iconOnly: size.width < 350 || typeSize.isAccessibilitySize)
                     map
                         .environment(\.colorScheme, .dark)
                         .background(palette.stage)
+                        .overlay(alignment: .topLeading) {
+                            mapToolbar(iconOnly: size.width < 420 || typeSize.isAccessibilitySize)
+                                .padding(10)
+                        }
                         .onGeometryChange(for: Bool.self) { geometry in
                             geometry.size.height > geometry.size.width * 1.4
                         } action: { isNarrowPortrait in
@@ -201,11 +230,17 @@ struct GlobeView: View {
                         }
                     if !wide, let featured = library.featured.first {
                         Rectangle().fill(palette.line).frame(height: 1)
-                        GlobeCompactAirport(airport: featured, palette: palette, open: open)
+                        HStack(spacing: 0) {
+                            GlobeCompactAirport(airport: featured, palette: palette, open: open)
+                            Divider().frame(height: 24)
+                            exploreButton
+                                .padding(.horizontal, 10)
+                        }
+                        .background(palette.surface)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if wide && palette.isDark {
+                if wide {
                     featuredRail(width: railWidth, border: .leading)
                 }
             }
@@ -216,21 +251,50 @@ struct GlobeView: View {
     @ViewBuilder
     private func featuredRail(width: CGFloat, border: Alignment) -> some View {
         if let airport = library.featured.first {
-            GeometryReader { geometry in
-                let inset: CGFloat = palette.isDark ? 15 : 19
-                ScrollView {
-                    GlobeAirportBrief(airport: airport, palette: palette, open: open,
-                                      minimumHeight: max(0, geometry.size.height - 2 * inset))
-                        .padding(inset)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    let saved = favorites.airportIDs.compactMap(library.airport).sorted { $0.displayCode < $1.displayCode }
+                    let fleet = library.aircraft.filter { favorites.aircraftIDs.contains($0.id) }
+                    if !saved.isEmpty || !fleet.isEmpty {
+                        Label("收藏", systemImage: "star.fill")
+                            .font(AtlasTypography.font(.headline))
+                            .foregroundStyle(palette.ink)
+                        ForEach(saved) { item in
+                            GlobeCompactAirport(airport: item, palette: palette, open: open)
+                                .clipShape(.rect(cornerRadius: 12))
+                                .accessibilityIdentifier("globe-saved-\(item.id)")
+                        }
+                        ForEach(fleet) { item in
+                            Button { openAircraft(item) } label: {
+                                Label(item.displayName, systemImage: "airplane")
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                            .accessibilityIdentifier("globe-saved-aircraft-\(item.id)")
+                        }
+                    }
+                    GlobeAirportBrief(airport: airport, palette: palette, open: open)
+                    exploreButton
                 }
-                .accessibilityIdentifier("globe-featured-rail")
+                .padding(16)
             }
+            .accessibilityIdentifier("globe-featured-rail")
             .frame(width: width)
             .background(palette.subtle)
             .overlay(alignment: border) {
                 Rectangle().fill(palette.line).frame(width: 1).allowsHitTesting(false)
             }
         }
+    }
+
+    private var exploreButton: some View {
+        Button(action: explore) {
+            Label("探索", systemImage: "safari")
+                .font(AtlasTypography.font(.headline))
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .foregroundStyle(palette.accent)
+        .accessibilityIdentifier("globe-open-exploration")
     }
 
     private var map: some View {
@@ -272,7 +336,7 @@ struct GlobeView: View {
     }
 
     private func mapToolbar(iconOnly: Bool) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 2) {
 #if !MAINLAND_DISTRIBUTION
             Button {
                 routeLayer.toggle()
@@ -281,7 +345,7 @@ struct GlobeView: View {
                                                               : "point.topleft.down.to.point.bottomright.curvepath",
                                 iconOnly: iconOnly)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
             .accessibilityValue(routeLayer ? "已显示" : "已隐藏")
             .accessibilityAddTraits(routeLayer ? .isSelected : [])
             .accessibilityIdentifier("globe-route-layer")
@@ -296,30 +360,31 @@ struct GlobeView: View {
                                 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
                                 iconOnly: iconOnly)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
             .accessibilityValue(airportCategoriesLabel)
             .accessibilityIdentifier("globe-airport-categories")
 #endif
-            Spacer(minLength: 0)
+            Divider().frame(height: 18)
             Button(action: reset) {
                 mapControlLabel("全球", systemImage: "globe", iconOnly: iconOnly)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
             .accessibilityLabel("返回全球")
             .accessibilityIdentifier("globe-reset-world")
         }
         .font(AtlasTypography.font(.subheadline, weight: .semibold))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(palette.surface)
-        .tint(palette.accent)
+        .padding(.horizontal, 8)
+        .foregroundStyle(palette.selectionInk)
+        .background(palette.surface.opacity(0.96), in: .capsule)
+        .overlay { Capsule().strokeBorder(palette.line.opacity(0.8)).allowsHitTesting(false) }
+        .shadow(color: .black.opacity(0.16), radius: 5, y: 2)
     }
 
     private func mapControlLabel(_ title: LocalizedStringKey, systemImage: String, iconOnly: Bool) -> some View {
         let label = Label(title, systemImage: systemImage)
         return Group {
             if iconOnly { label.labelStyle(.iconOnly) }
-            else { label.labelStyle(.titleAndIcon) }
+            else { label.labelStyle(.titleAndIcon).padding(.horizontal, 5) }
         }
         .frame(minWidth: 44, minHeight: 44)
     }
@@ -363,7 +428,6 @@ private struct GlobeAirportBrief: View {
     let airport: Airport
     let palette: AtlasPalette
     let open: (Airport) -> Void
-    var minimumHeight: CGFloat? = nil
     @ScaledMetric(relativeTo: .largeTitle) private var codeSize = 45.0
 
     var body: some View {
@@ -371,6 +435,11 @@ private struct GlobeAirportBrief: View {
             Text("精选机场")
                 .font(AtlasTypography.font(.footnote, weight: .semibold))
                 .foregroundStyle(palette.muted)
+            #if !MAINLAND_DISTRIBUTION
+            if airport.id == "HKG" {
+                HongKongTerminalCover()
+            }
+            #endif
             VStack(alignment: .leading, spacing: 3) {
                 Text(airport.displayCode)
                     .font(.system(size: codeSize, weight: .bold, design: palette.isDark ? .monospaced : .default))
@@ -385,11 +454,11 @@ private struct GlobeAirportBrief: View {
             .accessibilityElement(children: .combine)
             Rectangle().fill(palette.line).frame(height: 1)
             if DistributionPolicy.mapsAvailable {
-                Text("点按地球上的机场标记可直接打开机场。")
+                Text(airport.modelLabel)
                     .font(AtlasTypography.font(.subheadline))
                     .foregroundStyle(palette.muted)
             }
-            if minimumHeight != nil { Spacer(minLength: 10) }
+
             Button {
                 open(airport)
             } label: {
@@ -405,7 +474,7 @@ private struct GlobeAirportBrief: View {
             .accessibilityIdentifier("globe-featured-\(airport.id)")
         }
         .padding(palette.isDark ? 13 : 17)
-        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .atlasPanel(palette)
     }
 

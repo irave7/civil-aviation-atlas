@@ -10,32 +10,61 @@ struct AtlasExplorationHub<Routes: View>: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @SceneStorage("atlas.exploration.category") private var category = Category.routes
-    @SceneStorage("atlas.exploration.airport-region") private var airportRegion = AirportRegion.mainland
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Namespace private var tabAnimation
 
     private enum Category: String, CaseIterable {
         case airports = "机场", aircraft = "机型", routes = "航线"
-    }
 
-    private enum AirportRegion: String, CaseIterable {
-        case mainland = "中国大陆", worldwide = "全球"
+        var symbol: String {
+            switch self {
+            case .airports: "building.2"
+            case .aircraft: "airplane"
+            case .routes: "point.topleft.down.curvedto.point.bottomright.up"
+            }
+        }
     }
 
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("探索类别", selection: $category) {
+            HStack(spacing: 0) {
                 ForEach(Category.allCases, id: \.self) { item in
-                    Text(item.rawValue).tag(item)
+                    Button {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { category = item }
+                    } label: {
+                        HStack(spacing: 7) {
+                            if !typeSize.isAccessibilitySize {
+                                Image(systemName: item.symbol)
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            Text(item.rawValue).font(AtlasTypography.font(.headline, weight: .semibold))
+                        }
+                        .foregroundStyle(category == item ? palette.accent : palette.muted)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .overlay(alignment: .bottom) {
+                            if category == item {
+                                Capsule().fill(palette.accent)
+                                    .frame(width: 32, height: 3)
+                                    .matchedGeometryEffect(id: "active-category", in: tabAnimation)
+                            }
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(item.rawValue)
+                    .accessibilityAddTraits(category == item ? .isSelected : [])
                 }
             }
-            .pickerStyle(.segmented)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("atlas-exploration-category")
-            .frame(maxWidth: 660)
+            .frame(maxWidth: 760)
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
             .background(palette.surface)
+            .overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 0.5) }
 
             switch category {
             case .airports: airportPage
@@ -45,24 +74,15 @@ struct AtlasExplorationHub<Routes: View>: View {
         }
         .background(palette.page)
         .tint(palette.accent)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { ExplorationVoiceMenu() }
+        }
     }
 
     private var airportPage: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: palette.contentGap) {
-                Picker("机场范围", selection: $airportRegion) {
-                    ForEach(AirportRegion.allCases, id: \.self) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("exploration-airport-region")
-
-                FlightAirportChapters(
-                    library: library, domestic: airportRegion == .mainland, openAirport: openAirport
-                )
-            }
-            .atlasReadingWidth()
+            FlightAirportChapters(library: library, openAirport: openAirport)
+                .atlasReadingWidth()
         }
         .accessibilityIdentifier("exploration-airport-scroll")
     }
@@ -73,5 +93,54 @@ struct AtlasExplorationHub<Routes: View>: View {
                 .atlasReadingWidth()
         }
         .accessibilityIdentifier("exploration-aircraft-scroll")
+    }
+}
+
+// Each segment represents a task available in the current chapter.
+struct ExplorationChapterHeader: View {
+    let title: String
+    let done: Int
+    let total: Int
+    let unit: String
+    let palette: AtlasPalette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 14) {
+                    heading
+                    Spacer(minLength: 4)
+                    progressLabel
+                }
+                VStack(alignment: .leading, spacing: 6) { heading; progressLabel }
+            }
+            if total > 0 {
+                HStack(spacing: 3) {
+                    ForEach(0..<total, id: \.self) { index in
+                        Capsule().fill(index < done ? palette.stageAccent : palette.stageMuted.opacity(0.30))
+                    }
+                }
+                .frame(height: 4)
+                .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 17)
+        .padding(.vertical, 16)
+        .background(palette.stage, in: .rect(cornerRadius: palette.corner))
+    }
+
+    private var heading: some View {
+        Text(title)
+            .font(AtlasTypography.font(.title2, weight: .bold))
+            .foregroundStyle(palette.stageInk)
+            .fixedSize(horizontal: true, vertical: true)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var progressLabel: some View {
+        Text("已完成 \(done) / \(total)\(unit)")
+            .font(AtlasTypography.font(.subheadline, weight: .medium).monospacedDigit())
+            .foregroundStyle(palette.stageAccent)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

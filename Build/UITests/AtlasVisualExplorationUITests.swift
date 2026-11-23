@@ -61,7 +61,7 @@ final class AtlasVisualExplorationUITests: XCTestCase {
     private func captureFlight(_ suffix: String, in app: XCUIApplication) {
         let stage = element("simulator-exterior-view", in: app)
         let instruction = app.staticTexts["飞行简报"].firstMatch
-        let control = element("simulator-exterior-camera", in: app)
+        let control = element("simulator-expand-stage", in: app)
         XCTAssertTrue(stage.waitForExistence(timeout: 15))
         XCTAssertTrue(instruction.waitForExistence(timeout: 10))
         XCTAssertTrue(control.waitForExistence(timeout: 10))
@@ -69,7 +69,7 @@ final class AtlasVisualExplorationUITests: XCTestCase {
         assertHorizontalBounds(stage, in: app)
         assertHorizontalBounds(instruction, in: app)
         assertHorizontalBounds(control, in: app)
-        if app.frame.width >= 740 {
+        if app.frame.width >= 740 && app.frame.width > app.frame.height {
             XCTAssertLessThan(stage.frame.midX, instruction.frame.midX, "宽屏应将飞行画面与简报并排")
         }
         attach("exploration-\(suffix)")

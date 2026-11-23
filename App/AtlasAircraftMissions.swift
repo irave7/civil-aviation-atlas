@@ -11,6 +11,8 @@ struct AtlasAircraftMissions: View {
     @AppStorage(AtlasObservationProgress.aircraftKey) private var completed = ""
     @SceneStorage("atlas.exploration.selected-aircraft") private var expandedID: String?
 
+    @State private var listening = ExplorationListening()
+
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
@@ -20,20 +22,15 @@ struct AtlasAircraftMissions: View {
         let marks = AtlasObservationProgress.completed(in: completed)
         let done = available.filter { marks.contains($0.mission.id) }.count
         LazyVStack(alignment: .leading, spacing: palette.contentGap) {
-            Text("机型探索")
-                .font(AtlasTypography.font(.title2, weight: .bold))
-                .accessibilityAddTraits(.isHeader)
-
-            if !available.isEmpty {
-                ProgressView("已完成 \(done) / \(available.count) 项", value: Double(done), total: Double(available.count))
-                    .accessibilityIdentifier("exploration-aircraft-progress")
-            }
-
+            ExplorationChapterHeader(title: "机型探索", done: done, total: available.count, unit: " 项", palette: palette)
+                .accessibilityIdentifier("exploration-aircraft-progress")
             ForEach(available, id: \.aircraft.id) { entry in
                 card(entry.mission, aircraft: entry.aircraft, isComplete: marks.contains(entry.mission.id))
             }
         }
         .foregroundStyle(palette.ink)
+        .onDisappear(perform: listening.stop)
+        .onChange(of: expandedID) { listening.stop() }
     }
 
     private func card(_ mission: AircraftMission, aircraft: AircraftProfile, isComplete: Bool) -> some View {
@@ -53,11 +50,11 @@ struct AtlasAircraftMissions: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(aircraft.displayName)
+                            .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                            .foregroundStyle(palette.accent)
+                        Text(mission.title)
                             .font(AtlasTypography.font(.headline, weight: .bold))
                             .foregroundStyle(palette.ink)
-                        Text(mission.title)
-                            .font(AtlasTypography.font(.subheadline))
-                            .foregroundStyle(palette.muted)
                     }
                     Spacer(minLength: 2)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
@@ -80,6 +77,7 @@ struct AtlasAircraftMissions: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     Button {
+                        listening.stop()
                         openAircraft(aircraft)
                     } label: {
                         Label("打开三维模型", systemImage: "cube")
@@ -88,6 +86,12 @@ struct AtlasAircraftMissions: View {
                     .buttonStyle(.bordered)
                     .tint(palette.accent)
                     .accessibilityIdentifier("exploration-aircraft-open-\(mission.id)")
+
+                    let key = "aircraft-\(mission.id)"
+                    ExplorationListenButton(player: listening, source: .observation(id: key, fallback: mission.observation),
+                                            accessibilityID: "exploration-aircraft-listen-\(mission.id)")
+                        .tint(palette.accent)
+                    ExplorationVoiceCaption(player: listening, id: key)
 
                     AtlasObservationMission(
                         id: "aircraft-\(mission.id)", question: mission.question,

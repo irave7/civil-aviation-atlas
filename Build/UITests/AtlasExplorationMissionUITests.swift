@@ -31,6 +31,9 @@ final class AtlasExplorationMissionUITests: XCTestCase {
             tap(answer)
         }
         verifyCompleted(airport)
+        let airportGuide = app.buttons["flight-airport-listen-SHA"].firstMatch
+        if !airportGuide.exists { tap(airport) }
+        reveal(airportGuide, in: app.scrollViews["exploration-airport-scroll"].firstMatch)
         screenshot("机场探索 · 上海虹桥任务")
 
         app.selectExplorationCategory("机型")
@@ -43,6 +46,9 @@ final class AtlasExplorationMissionUITests: XCTestCase {
             tap(answer)
         }
         verifyCompleted(aircraft)
+        let aircraftGuide = app.buttons["exploration-aircraft-listen-c919"].firstMatch
+        if !aircraftGuide.exists { tap(aircraft) }
+        reveal(aircraftGuide, in: app.scrollViews["exploration-aircraft-scroll"].firstMatch)
         screenshot("机型探索 · C919 任务")
 
         let model = app.buttons["exploration-aircraft-open-c919"].firstMatch
@@ -61,6 +67,41 @@ final class AtlasExplorationMissionUITests: XCTestCase {
         verifyCompleted(app.buttons["flight-airport-chapter-SHA"].firstMatch)
         app.selectExplorationCategory("航线")
         XCTAssertTrue(app.segmentedControls["exploration-route-mode"].firstMatch.waitForExistence(timeout: 15))
+    }
+
+    func testRouteDiscoveryKeepsControlsVisibleAcrossWidths() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN", "-atlas.appearance", "dark"]
+        app.launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        app.openAtlasExploration(category: "航线")
+        let style = app.buttons["exploration-voice-style"].firstMatch
+        tap(style)
+        tap(app.buttons["AI 配音 · 航程向导"].firstMatch)
+        XCTAssertEqual(style.value as? String, "航程向导")
+        let modes = app.segmentedControls["exploration-route-mode"].firstMatch
+        tap(modes.buttons["自由航线"].firstMatch)
+        let departure = app.buttons["exploration-origin"].firstMatch
+        XCTAssertTrue(departure.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(departure.frame))
+        screenshot("自由航线 · 横屏")
+
+        XCUIDevice.shared.orientation = .portrait
+        tap(modes.buttons["航线关卡"].firstMatch)
+        let route = app.buttons["flight-challenge-SHA-PEK"].firstMatch
+        XCTAssertTrue(route.waitForExistence(timeout: 15))
+        reveal(route, in: app.scrollViews["flight-exploration"].firstMatch)
+        XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(route.frame))
+        let guide = app.buttons["flight-challenge-listen-SHA-PEK"].firstMatch
+        reveal(guide, in: app.scrollViews["flight-exploration"].firstMatch)
+        tap(guide)
+        let playing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (guide.value as? String) == "正在播放"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 12), .completed)
+        screenshot("代表航线 · 竖屏")
+        tap(route)
+        XCTAssertTrue(app.descendants(matching: .any)["flight-challenge-briefing"].firstMatch.waitForExistence(timeout: 15))
     }
 
     private func selectDomesticAirportRegion(in app: XCUIApplication) {

@@ -17,7 +17,7 @@ final class AtlasAppearanceUITests: XCTestCase {
         select("light", title: "浅色 · 青瓷航空图鉴", on: app, phone: phone)
         closeDirectory(in: app, phone: phone)
         assertHome(in: app)
-        assertGlobeRail(isTrailing: false, in: app, phone: phone)
+        assertGlobeRail(isTrailing: true, in: app, phone: phone)
         screenshot("浅色首页 · 青瓷航空图鉴")
         tap(element("globe-featured-HKG", in: app), preferFrame: true)
         assertAirport(in: app)

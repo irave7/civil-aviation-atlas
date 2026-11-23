@@ -39,6 +39,35 @@ final class UniversalAtlasUITests: XCTestCase {
         #endif
     }
 
+    #if MAINLAND_DISTRIBUTION && !MAINLAND_APPROVED_MAPS
+    func testOfflineHomeOpensSavedAirportAircraftAndExploration() {
+        let app = launchAtlas(extra: ["-AtlasFavoriteIDs.airport", "(FOC)", "-AtlasFavoriteIDs.aircraft", "(c919)"])
+        let home = app.scrollViews["mainland-airport-browse"].firstMatch
+        XCTAssertTrue(home.waitForExistence(timeout: 15))
+        attachScreenshot(app.screenshot(), named: "大陆首页 · 收藏与探索")
+
+        tap("globe-featured-FOC", in: app)
+        let airport = control("airport-localized-title", in: app)
+        XCTAssertTrue(airport.waitForExistence(timeout: 15))
+        XCTAssertTrue(airport.label.contains("福州"))
+        openDirectory(in: app)
+        tap("entry-globe", in: app)
+
+        let aircraft = home.buttons.matching(NSPredicate(format: "label CONTAINS %@", "C919")).firstMatch
+        XCTAssertTrue(aircraft.waitForExistence(timeout: 15))
+        aircraft.tap()
+        XCTAssertTrue(control("model-viewport", in: app).waitForExistence(timeout: 20))
+        openDirectory(in: app)
+        tap("entry-globe", in: app)
+
+        let explore = home.buttons["进入探索"].firstMatch
+        XCTAssertTrue(explore.waitForExistence(timeout: 15))
+        explore.tap()
+        app.selectExplorationCategory("机场")
+        XCTAssertTrue(control("flight-airport-chapter-SHA", in: app).waitForExistence(timeout: 15))
+    }
+    #endif
+
     func testUniversalAircraftControlsAndPrivacy() {
         let app = launchAtlas()
         openDirectory(in: app)
@@ -87,9 +116,9 @@ final class UniversalAtlasUITests: XCTestCase {
         }
     }
 
-    private func launchAtlas() -> XCUIApplication {
+    private func launchAtlas(extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"] + extra
         app.launch()
         XCUIDevice.shared.orientation = UIDevice.current.userInterfaceIdiom == .phone ? .portrait : .landscapeLeft
         XCTAssertTrue(control("atlas-sidebar-toggle", in: app).waitForExistence(timeout: 20))
@@ -111,6 +140,15 @@ final class UniversalAtlasUITests: XCTestCase {
 
     private func tap(_ id: String, in app: XCUIApplication, allowsCenterTap: Bool = false) {
         let element = control(id, in: app)
+        if id == "entry-privacy" {
+            let sidebar = app.descendants(matching: .any).matching(identifier: "atlas-directory-list").firstMatch
+            if sidebar.exists {
+                for _ in 0..<5 {
+                    if element.exists && element.isHittable { break }
+                    sidebar.swipeUp(velocity: .slow)
+                }
+            }
+        }
         if allowsCenterTap {
             XCTAssertTrue(element.waitForExistence(timeout: 15), "找不到 \(id)")
             if !element.isHittable {

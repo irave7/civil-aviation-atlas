@@ -163,3 +163,21 @@ private struct AirportPhotoDetail: View {
         }
     }
 }
+
+struct HongKongTerminalCover: View {
+    private static let photo = AirportPhoto.hongKong[0]
+    private static let image = photo.image
+
+    var body: some View {
+        if let image = Self.image {
+            VStack(alignment: .leading, spacing: 4) {
+                Color.clear.aspectRatio(1.85, contentMode: .fit)
+                    .overlay { Image(uiImage: image).resizable().scaledToFill() }
+                    .clipShape(.rect(cornerRadius: 12))
+                    .accessibilityLabel(Self.photo.altText)
+                Link("LN9267 · CC BY-SA 4.0", destination: Self.photo.source)
+                    .font(AtlasTypography.font(.caption))
+            }
+        }
+    }
+}

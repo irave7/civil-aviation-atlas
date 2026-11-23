@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class FlightVoiceInteraction {
-    private enum Status { case idle, loading, guide, cabin, paused, unavailable }
+    private enum Status { case idle, loading, guide, cabin, paused, finished, unavailable }
 
     private struct Broadcast {
         let cue: ExplorationNarrationCue
@@ -17,6 +17,7 @@ final class FlightVoiceInteraction {
     private struct Message {
         let heading: String
         let text: String
+        let voice: ExplorationVoice
         let broadcast: Broadcast?
     }
 
@@ -29,6 +30,7 @@ final class FlightVoiceInteraction {
 
     private var status: Status = .idle
     private var message: Message?
+    private var captionChannel = ExplorationNarrator.Channel.guide
     @ObservationIgnored private let narrator = ExplorationNarrator()
     @ObservationIgnored private var activeSound: FlightSimulatorSound?
     @ObservationIgnored private var generation = 0
@@ -40,12 +42,17 @@ final class FlightVoiceInteraction {
     var canPause: Bool { isSpeaking || isPaused }
     var canReplay: Bool { message != nil }
     var heading: String? { message?.heading }
-    var summary: String? { message?.text }
-    var summaryLabel: String { message?.broadcast == nil ? "答复" : "播报摘要" }
+    var summary: String? {
+        if captionChannel == .cabin, let caption = FlightAudioText.transcript(for: message?.broadcast?.cabin) {
+            return caption
+        }
+        return message?.text
+    }
 
     var statusLabel: String {
         switch status {
-        case .idle: "语音待命"
+        case .idle: message == nil ? "等待航程播报" : "播放已停止"
+        case .finished: "播放完毕"
         case .loading: "正在准备语音"
         case .guide: message?.broadcast == nil ? "正在回答" : "航程播报中"
         case .cabin: message?.broadcast?.cabinTitle.map { "\($0)模拟广播" } ?? "航司广播中"
@@ -58,7 +65,9 @@ final class FlightVoiceInteraction {
               recording: URL?, cabin: URL?, cabinTitle: String?, sound: FlightSimulatorSound,
               onStarted: (@MainActor () -> Void)? = nil, onCabinStarted: (@MainActor () -> Void)? = nil) {
         let broadcast = Broadcast(cue: cue, voice: voice, recording: recording, cabin: cabin, cabinTitle: cabinTitle)
-        let next = Message(heading: cue.phaseLabel, text: text, broadcast: broadcast)
+        let audio = recording ?? ExplorationNarrator.audioURL(for: cue, voice: voice)
+        let caption = voice == .system ? text : FlightAudioText.transcript(for: audio) ?? text
+        let next = Message(heading: cue.phaseLabel, text: caption, voice: voice, broadcast: broadcast)
         if protectsManualPlayback {
             // Keep the latest phase once, even if the pilot pauses the spoken reply.
             pendingBroadcast = PendingBroadcast(message: next, sound: sound,
@@ -68,8 +77,8 @@ final class FlightVoiceInteraction {
         }
     }
 
-    func ask(_ question: FlightVoiceQuestion, sound: FlightSimulatorSound) {
-        load(Message(heading: question.title, text: question.answer, broadcast: nil), sound: sound, manual: true)
+    func ask(_ question: FlightVoiceQuestion, voice: ExplorationVoice, sound: FlightSimulatorSound) {
+        load(Message(heading: question.title, text: question.answer, voice: voice, broadcast: nil), sound: sound, manual: true)
     }
 
     func replay(sound: FlightSimulatorSound) {
@@ -107,6 +116,7 @@ final class FlightVoiceInteraction {
             activeSound?.setNarrationActive(false)
             activeSound = sound
         }
+        captionChannel = .guide
         message = next
         protectsManualPlayback = manual
         status = .loading
@@ -122,7 +132,7 @@ final class FlightVoiceInteraction {
                            observe: observer, onCabinStarted: callback(onCabinStarted, request: request),
                            onPlaybackStarted: callback(onStarted, request: request))
         } else {
-            narrator.speakAnswer(next.text, observe: observer)
+            narrator.speakAnswer(next.text, voice: next.voice, observe: observer)
         }
     }
 
@@ -138,8 +148,12 @@ final class FlightVoiceInteraction {
 
     private func updateStatus(for event: ExplorationNarrator.Event) {
         switch event {
-        case .playing(.guide): status = .guide
-        case .playing(.cabin): status = .cabin
+        case .playing(.guide):
+            captionChannel = .guide
+            status = .guide
+        case .playing(.cabin):
+            captionChannel = .cabin
+            status = .cabin
         case .paused: status = .paused
         case .finished: finishPlayback(unavailable: false)
         case .unavailable: finishPlayback(unavailable: true)
@@ -148,7 +162,7 @@ final class FlightVoiceInteraction {
     }
 
     private func finishPlayback(unavailable: Bool) {
-        status = unavailable ? .unavailable : .idle
+        status = unavailable ? .unavailable : .finished
         protectsManualPlayback = false
         guard let pending = pendingBroadcast else { return }
         pendingBroadcast = nil
@@ -181,16 +195,16 @@ struct FlightVoiceQuestion: Identifiable {
         let progress = Int((simulation.progress * 100).rounded())
         let stage = (simulation.phase == .briefing ? nil : simulation.groundStage?.title) ?? simulation.phase.title
         let position = switch simulation.phase {
-        case .briefing: "飞机还在\(origin)。准备就绪后，我们将飞往\(destination)。"
+        case .briefing: "我们还停在\(origin)。这一程要去的是\(destination)。"
         case .arrived: "我们已经抵达\(destination)。打开飞行复盘，就能查看这次航程。"
-        default: "我们正在\(stage)。从\(origin)到\(destination)的模拟航程已完成百分之\(progress)。"
+        default: "现在是\(stage)阶段。从\(origin)飞往\(destination)的这段路，我们走过了百分之\(progress)。"
         }
         let airspeed = Int(simulation.airspeed.rounded())
         let groundSpeed = Int(simulation.groundSpeedKnots.rounded())
         let altitude = Int(simulation.altitude.rounded())
         let instruments = simulation.onGround
-            ? "当前地速是\(groundSpeed)节。地速表示飞机相对地面移动得多快。"
-            : "当前空速是\(airspeed)节，海拔\(altitude)英尺。空速是飞机相对周围空气的速度。"
+            ? "当前地速是\(groundSpeed)节。看看窗外的地面，它向后移动得越快，地速就越大。"
+            : "高度表读作\(altitude)英尺。再看空速表，\(airspeed)节，表示飞机穿过周围空气的速度。"
         return [
             .init(kind: .nextStep, answer: simulation.instruction),
             .init(kind: .progress, answer: position),
@@ -203,6 +217,7 @@ struct FlightVoiceQuestion: Identifiable {
 struct FlightVoiceDeck: View {
     let interaction: FlightVoiceInteraction
     @Binding var narration: Bool
+    let voice: ExplorationVoice
     let sound: FlightSimulatorSound
     let questions: [FlightVoiceQuestion]
 
@@ -211,58 +226,78 @@ struct FlightVoiceDeck: View {
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("飞行语音", systemImage: "waveform")
-                    .font(AtlasTypography.font(.headline, weight: .bold))
-                    .accessibilityAddTraits(.isHeader)
-                Text(interaction.statusLabel)
-                    .font(AtlasTypography.font(.subheadline, weight: .medium))
-                    .foregroundStyle(interaction.isSpeaking ? palette.accent : palette.muted)
-                    .accessibilityIdentifier("simulator-voice-status")
-            }
-            Toggle("自动播报", isOn: $narration)
-                .accessibilityIdentifier("simulator-voice-automatic")
-
-            if let heading = interaction.heading, let summary = interaction.summary {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("\(interaction.summaryLabel) · \(heading)")
-                        .font(AtlasTypography.font(.subheadline, weight: .bold))
-                    Text(summary)
-                        .font(AtlasTypography.font(.subheadline))
+        VStack(alignment: .leading, spacing: palette.contentGap) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: interaction.isPaused ? "pause.fill" : "waveform")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(palette.accent)
+                        .frame(width: 40, height: 40)
+                        .background(palette.selection, in: .circle)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(interaction.heading ?? "航程播报")
+                            .font(AtlasTypography.font(.headline, weight: .bold))
+                            .accessibilityAddTraits(.isHeader)
+                        Text(interaction.statusLabel)
+                            .font(AtlasTypography.font(.footnote, weight: .medium))
+                            .foregroundStyle(palette.muted)
+                            .accessibilityIdentifier("simulator-voice-status")
+                    }
+                }
+                if let caption = interaction.summary {
+                    Text(caption)
+                        .font(AtlasTypography.font(.body))
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("simulator-voice-summary")
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { playbackButtons }
+                        VStack(alignment: .leading, spacing: 6) { playbackButtons }
+                    }
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(palette.page, in: .rect(cornerRadius: 8))
+                Divider()
+                Toggle("自动播报", isOn: $narration)
+                    .accessibilityIdentifier("simulator-voice-automatic")
             }
+            .padding(15)
+            .atlasPanel(palette)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { playbackButtons }
-                VStack(alignment: .leading, spacing: 5) { playbackButtons }
-            }
-            Text("问问向导")
-                .font(AtlasTypography.font(.subheadline, weight: .bold))
-                .accessibilityAddTraits(.isHeader)
-            ForEach(questions) { question in
-                Button {
-                    interaction.ask(question, sound: sound)
-                } label: {
-                    Label(question.title, systemImage: question.kind.symbol)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("问问向导")
+                    .font(AtlasTypography.font(.headline, weight: .bold))
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.bottom, 5)
+                ForEach(questions) { question in
+                    Button {
+                        interaction.ask(question, voice: voice, sound: sound)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: question.kind.symbol)
+                                .foregroundStyle(palette.accent)
+                                .frame(width: 23)
+                                .accessibilityHidden(true)
+                            Text(question.title)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 4)
+                            Image(systemName: "play.circle")
+                                .foregroundStyle(palette.accent)
+                                .accessibilityHidden(true)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
                         .contentShape(.rect)
+                    }
+                    .font(AtlasTypography.font(.subheadline, weight: .medium))
+                    .buttonStyle(.plain)
+                    .accessibilityHint("播放回答并显示全文")
+                    .accessibilityIdentifier("simulator-voice-question-\(question.id)")
+                    if question.id != questions.last?.id { Divider() }
                 }
-                .font(AtlasTypography.font(.subheadline, weight: .medium))
-                .buttonStyle(.plain)
-                .foregroundStyle(palette.accent)
-                .accessibilityIdentifier("simulator-voice-question-\(question.id)")
             }
+            .padding(15)
+            .atlasPanel(palette)
         }
         .foregroundStyle(palette.ink)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .atlasPanel(palette)
     }
 
     @ViewBuilder private var playbackButtons: some View {

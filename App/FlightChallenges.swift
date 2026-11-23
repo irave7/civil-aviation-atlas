@@ -89,6 +89,7 @@ struct FlightChallengeBrowser: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @AppStorage(FlightChallengeProgress.key) private var completed = ""
     @State private var region = Region.mainland
+    @State private var listening = ExplorationListening()
 
     private enum Region: String, CaseIterable {
         case mainland = "中国大陆", worldwide = "全球"
@@ -106,59 +107,76 @@ struct FlightChallengeBrowser: View {
             routes
         }
         .task { await library.prepareObservedRoutes() }
+        .onDisappear(perform: listening.stop)
+        .onChange(of: region) { listening.stop() }
     }
 
     private var routes: some View {
         let candidates = region == .mainland ? FlightChallenge.mainland : FlightChallenge.worldwide
         let ready = candidates.compactMap { challenge in challenge.leg(in: library).map { (challenge, $0) } }
-        let total = Double(ready.count)
         let done = ready.count { FlightChallengeProgress.contains($0.0.id, in: completed) }
         return LazyVStack(alignment: .leading, spacing: 11) {
-            if total > 0 {
-                ProgressView("已完成 \(done) / \(ready.count) 关", value: Double(done), total: total)
-                    .padding(.vertical, 6)
+            if !ready.isEmpty {
+                ExplorationChapterHeader(title: "航线关卡", done: done, total: ready.count, unit: " 关", palette: palette)
                     .accessibilityIdentifier("flight-challenge-progress")
             }
             ForEach(ready, id: \.0.id) { challenge, leg in
-                Button {
-                    onSelect(challenge, leg)
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: FlightChallengeProgress.contains(challenge.id, in: completed) ? "checkmark.circle.fill" : "airplane.circle")
-                            .font(.title3)
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        listening.stop()
+                        onSelect(challenge, leg)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack(spacing: 10) {
+                                Text(leg.start.displayCode)
+                                HStack(spacing: 5) {
+                                    Rectangle().fill(palette.line).frame(height: 1)
+                                    Image(systemName: "airplane")
+                                        .font(.footnote.weight(.semibold))
+                                    Rectangle().fill(palette.line).frame(height: 1)
+                                }
+                                .frame(maxWidth: 82)
+                                .accessibilityHidden(true)
+                                Text(leg.end.displayCode)
+                                Spacer(minLength: 2)
+                                Image(systemName: FlightChallengeProgress.contains(challenge.id, in: completed)
+                                      ? "checkmark.circle.fill" : "chevron.right.circle")
+                                    .font(.title3)
+                                    .accessibilityHidden(true)
+                            }
+                            .font(.system(.title2, design: .rounded, weight: .bold))
                             .foregroundStyle(palette.accent)
-                        VStack(alignment: .leading, spacing: 6) {
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("\(leg.start.displayName)飞往\(leg.end.displayName)")
                             Text(challenge.title).font(AtlasTypography.font(.headline, weight: .bold))
-                            Text(routeLabel(leg))
-                                .font(AtlasTypography.font(.subheadline, weight: .medium))
-                                .foregroundStyle(palette.accent)
                             Text(challenge.introduction)
                                 .font(AtlasTypography.font(.subheadline))
                                 .foregroundStyle(palette.muted)
-                            Text("\(Int(leg.distance.rounded()).formatted()) 公里 · \(challenge.wind.rawValue)")
-                                .font(AtlasTypography.font(.caption))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Divider()
+                            Text([leg.evidence.flightNumber, leg.evidence.status,
+                                  "\(Int(leg.distance.rounded()).formatted()) 公里", challenge.wind.rawValue]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .font(AtlasTypography.font(.footnote))
                                 .foregroundStyle(palette.muted)
                         }
-                        Spacer(minLength: 2)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(palette.muted)
-                            .accessibilityHidden(true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.leading)
+                        .contentShape(.rect)
                     }
-                    .multilineTextAlignment(.leading)
-                    .padding(13)
-                    .atlasPanel(palette)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("flight-challenge-\(challenge.id)")
+                    .accessibilityValue(FlightChallengeProgress.contains(challenge.id, in: completed) ? "已完成" : "未完成")
+                    ExplorationListenButton(player: listening, source: .route(challenge),
+                                            accessibilityID: "flight-challenge-listen-\(challenge.id)")
+                        .tint(palette.accent)
+                    ExplorationVoiceCaption(player: listening, id: challenge.id)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("flight-challenge-\(challenge.id)")
-                .accessibilityValue(FlightChallengeProgress.contains(challenge.id, in: completed) ? "已完成" : "未完成")
+                .padding(15)
+                .atlasPanel(palette)
             }
         }
         .foregroundStyle(palette.ink)
     }
 
-    private func routeLabel(_ leg: ExplorationLeg) -> String {
-        let pair = "\(leg.start.displayCode) → \(leg.end.displayCode)"
-        return [pair, leg.evidence.flightNumber, leg.evidence.status].compactMap { $0 }.joined(separator: " · ")
-    }
 }

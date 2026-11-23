@@ -1,21 +1,24 @@
-import AVFoundation
 import SwiftUI
 
 @MainActor
 struct FlightAirportChapters: View {
     let library: AtlasLibrary
-    let domestic: Bool
     let openAirport: (Airport) -> Void
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private enum Region: String, CaseIterable {
+        case mainland = "中国大陆", worldwide = "全球"
+    }
+
+    @SceneStorage("atlas.exploration.airport-region") private var region = Region.mainland
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var domestic: Bool { region == .mainland }
     @SceneStorage("atlas.exploration.selected-airport") private var expandedID: String?
     @AppStorage(AtlasObservationProgress.airportsKey) private var completed = ""
-    @State private var playingID: String?
+    @State private var listening = ExplorationListening()
     @State private var previewSequence = 0
-    @State private var previewTask: Task<Void, Never>?
-    @State private var narrator = ExplorationNarrator()
 
     private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
     private var modelAccess: Bool { DistributionPolicy.airportSiteModelsAvailable }
@@ -27,22 +30,23 @@ struct FlightAirportChapters: View {
         let marks = AtlasObservationProgress.completed(in: completed)
         let done = chapters.filter { marks.contains($0.chapter.id) }.count
         LazyVStack(alignment: .leading, spacing: 12) {
-            Text("机场探索")
-                .font(AtlasTypography.font(.title2, weight: .bold))
-                .foregroundStyle(palette.ink)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("flight-airport-chapters")
-            if !chapters.isEmpty {
-                ProgressView("已完成 \(done) / \(chapters.count) 项", value: Double(done), total: Double(chapters.count))
-                    .accessibilityIdentifier("exploration-airport-progress")
+            ExplorationChapterHeader(title: "机场探索", done: done, total: chapters.count, unit: " 项", palette: palette)
+                .accessibilityIdentifier("exploration-airport-progress")
+            Picker("机场范围", selection: $region) {
+                ForEach(Region.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("exploration-airport-region")
             ForEach(chapters, id: \.airport.id) { entry in
                 card(entry.chapter, airport: entry.airport, isComplete: marks.contains(entry.chapter.id))
             }
         }
-        .onDisappear(perform: stopPreview)
+        .onDisappear(perform: listening.stop)
+        .onChange(of: listening.phase) {
+            if listening.phase == .playing { previewSequence &+= 1 }
+        }
         .onChange(of: domestic) {
-            stopPreview()
+            listening.stop()
             expandedID = nil
         }
     }
@@ -51,32 +55,42 @@ struct FlightAirportChapters: View {
         let expanded = expandedID == chapter.id
         return VStack(alignment: .leading, spacing: 12) {
             Button {
-                stopPreview()
+                listening.stop()
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.23)) {
                     expandedID = expanded ? nil : chapter.id
                 }
             } label: {
                 HStack(alignment: .center, spacing: 12) {
-                    HStack(spacing: 4) {
-                        if isComplete {
-                            Image(systemName: "checkmark.circle.fill")
-                                .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            Text(airport.displayCode).font(.system(.subheadline, design: .monospaced, weight: .bold))
+                            Text(airport.displayName).font(AtlasTypography.font(.subheadline, weight: .medium))
                         }
-                        Text(airport.displayCode)
-                            .font(palette.readout(.subheadline, weight: .bold))
-                    }
-                    .foregroundStyle(palette.selectionInk)
-                    .padding(8)
-                    .background(palette.selection, in: .rect(cornerRadius: 8))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(airport.displayName)
+                        .foregroundStyle(palette.accent)
+                        Text(chapter.title)
                             .font(AtlasTypography.font(.headline, weight: .bold))
                             .foregroundStyle(palette.ink)
-                        Text(chapter.title)
-                            .font(AtlasTypography.font(.subheadline))
-                            .foregroundStyle(palette.muted)
                     }
                     Spacer(minLength: 2)
+                    if isComplete {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(palette.accent)
+                            .accessibilityHidden(true)
+                    } else if modelAccess && !typeSize.isAccessibilitySize, let sketch = ChapterRunwaySketch(airport: airport) {
+                        Canvas { context, size in
+                            for line in sketch.lines {
+                                var trace = Path()
+                                trace.move(to: sketch.point(line.start, in: size, margin: 5))
+                                trace.addLine(to: sketch.point(line.end, in: size, margin: 5))
+                                context.stroke(trace, with: .color(palette.accent),
+                                               style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                            }
+                        }
+                        .frame(width: 46, height: 36)
+                        .padding(4)
+                        .background(palette.subtle, in: .rect(cornerRadius: 7))
+                        .accessibilityHidden(true)
+                    }
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(palette.accent)
@@ -100,7 +114,8 @@ struct FlightAirportChapters: View {
     }
 
     private func chapterDetails(_ chapter: AirportChapter, airport: Airport, isComplete: Bool) -> some View {
-        let recording = Self.previewURL(for: airport.displayCode)
+        let key = "airport-\(chapter.id)"
+        let audio = ExplorationListeningSource.observation(id: key, fallback: chapter.idea)
         return VStack(alignment: .leading, spacing: 11) {
             Text(chapter.idea)
                 .font(AtlasTypography.font(.body))
@@ -124,12 +139,14 @@ struct FlightAirportChapters: View {
             }
 
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 9) { actions(airport, recording: recording) }
-                VStack(alignment: .leading, spacing: 8) { actions(airport, recording: recording) }
+                HStack(spacing: 9) { actions(airport, audio: audio) }
+                VStack(alignment: .leading, spacing: 8) { actions(airport, audio: audio) }
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
             .tint(palette.accent)
+
+            ExplorationVoiceCaption(player: listening, id: key)
 
             if let question = chapter.question(for: airport, library: library) {
                 AtlasObservationMission(
@@ -156,24 +173,17 @@ struct FlightAirportChapters: View {
     }
 
     @ViewBuilder
-    private func actions(_ airport: Airport, recording: URL?) -> some View {
+    private func actions(_ airport: Airport, audio: ExplorationListeningSource) -> some View {
         Button {
-            stopPreview()
+            listening.stop()
             openAirport(airport)
         } label: {
             Label(modelAccess ? "看三维模型" : "读机场资料", systemImage: modelAccess ? "cube" : "book")
         }
         .accessibilityIdentifier("flight-airport-open-\(airport.id)")
 
-        if let recording {
-            let playing = playingID == airport.id
-            Button {
-                togglePreview(recording, airportID: airport.id)
-            } label: {
-                Label(playing ? "停止试听" : "听 AI 广播", systemImage: playing ? "stop.circle" : "speaker.wave.2")
-            }
-            .accessibilityIdentifier("flight-airport-listen-\(airport.id)")
-        }
+        ExplorationListenButton(player: listening, source: audio,
+                                accessibilityID: "flight-airport-listen-\(airport.id)")
     }
 
     private func source(for airport: Airport) -> AtlasSource? {
@@ -184,36 +194,7 @@ struct FlightAirportChapters: View {
         return airport.sources?.first ?? catalogueSources.first { $0.url == "https://ourairports.com/data/" }
     }
 
-    private static func previewURL(for code: String) -> URL? {
-        let name = "route-\(code)-departure-0"
-        return Bundle.main.url(forResource: name, withExtension: "m4a", subdirectory: "RouteVoices")
-            ?? Bundle.main.url(forResource: name, withExtension: "m4a", subdirectory: "Resources/RouteVoices")
-            ?? Bundle.main.url(forResource: name, withExtension: "m4a")
-    }
 
-    private func togglePreview(_ url: URL, airportID: String) {
-        let wasPlaying = playingID == airportID
-        stopPreview()
-        guard !wasPlaying else { return }
-        playingID = airportID
-        previewTask = Task {
-            let duration = try? await AVURLAsset(url: url).load(.duration).seconds
-            guard !Task.isCancelled else { return }
-            narrator.previewCabin(url)
-            previewSequence &+= 1
-            try? await Task.sleep(for: .seconds(duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 6))
-            guard !Task.isCancelled else { return }
-            playingID = nil
-            previewTask = nil
-        }
-    }
-
-    private func stopPreview() {
-        previewTask?.cancel()
-        previewTask = nil
-        playingID = nil
-        narrator.stop()
-    }
 }
 
 private struct AirportChapter: Identifiable {
@@ -401,8 +382,9 @@ private struct ChapterRunwaySketch {
         bounds = CGRect(x: left, y: top, width: max(1, right - left), height: max(1, bottom - top))
     }
 
-    func point(_ point: CGPoint, in size: CGSize) -> CGPoint {
-        let scale = min(max(1, size.width - 50) / bounds.width, max(1, size.height - 28) / bounds.height)
+    func point(_ point: CGPoint, in size: CGSize, margin: CGFloat? = nil) -> CGPoint {
+        let scale = min(max(1, size.width - 2 * (margin ?? 25)) / bounds.width,
+                        max(1, size.height - 2 * (margin ?? 14)) / bounds.height)
         return CGPoint(x: size.width / 2 + (point.x - bounds.midX) * scale,
                        y: size.height / 2 + (point.y - bounds.midY) * scale)
     }
@@ -424,7 +406,7 @@ private struct AirportChapterDiagram: View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
                 Canvas { context, size in
-                    for (index, line) in sketch.lines.enumerated() {
+                    for line in sketch.lines {
                         let start = sketch.point(line.start, in: size)
                         let end = sketch.point(line.end, in: size)
                         var path = Path()
@@ -432,15 +414,21 @@ private struct AirportChapterDiagram: View {
                         path.addLine(to: end)
                         context.stroke(path, with: .color(palette.line), style: StrokeStyle(lineWidth: 10, lineCap: .round))
                         context.stroke(path, with: .color(palette.accent.opacity(0.85)), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                        if index == 0, line.designations.count == 2 {
-                            let angle = atan2(end.y - start.y, end.x - start.x)
-                            let offset = CGVector(dx: -sin(angle) * 13, dy: cos(angle) * 13)
-                            for (name, point) in zip(line.designations, [start, end]) {
-                                let label = Text(name)
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                    .foregroundColor(palette.ink)
-                                context.draw(label, at: CGPoint(x: point.x + offset.dx, y: point.y + offset.dy))
-                            }
+                    }
+                    if let line = sketch.lines.first, line.designations.count == 2 {
+                        let start = sketch.point(line.start, in: size)
+                        let end = sketch.point(line.end, in: size)
+                        let angle = atan2(end.y - start.y, end.x - start.x)
+                        let offset = CGVector(dx: -sin(angle) * 30, dy: cos(angle) * 30)
+                        for (name, point) in zip(line.designations, [start, end]) {
+                            let center = CGPoint(x: min(size.width - 20, max(20, point.x + offset.dx)),
+                                                 y: min(size.height - 10, max(10, point.y + offset.dy)))
+                            let label = Text(name)
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(palette.ink)
+                            let box = CGRect(x: center.x - 17, y: center.y - 9, width: 34, height: 18)
+                            context.fill(Path(roundedRect: box, cornerRadius: 4), with: .color(palette.surface))
+                            context.draw(label, at: center)
                         }
                     }
                 }
@@ -464,7 +452,7 @@ private struct AirportChapterDiagram: View {
                 .padding(8)
             }
         }
-        .frame(height: 112)
+        .frame(height: 124)
         .background(palette.subtle, in: .rect(cornerRadius: 10))
         .clipped()
         .allowsHitTesting(false)

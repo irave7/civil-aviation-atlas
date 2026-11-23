@@ -13,7 +13,7 @@
 - 标准构建的航程观测由用户主动发起。机场风况来自 [NOAA 航空气象中心 METAR API](https://aviationweather.gov/data/api/)。符合条件的航班呼号从 [adsb.lol](https://www.adsb.lol/docs/open-data/api) 查询，公开信号适用 [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/)，覆盖和观测时间按来源显示。
 
 
-航程的普通话预制配音使用 [Kokoro-82M-v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)（Apache 2.0）和 [Sherpa-ONNX v2.0.2](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v2.0.2)。脚本与原创台词见 [Build/prepare-narration.py](Build/prepare-narration.py)。应用随包提供音频片段。生成工具、模型权重和原始训练语料均未随应用分发。
+机场、机型和航程的普通话预制配音使用 [Kokoro-82M-v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)（Apache 2.0）的 [Sherpa-ONNX 转换权重](https://github.com/k2-fsa/sherpa-onnx)，通过 [Misaki](https://github.com/hexgrad/misaki) 与 [pypinyin](https://github.com/mozillazg/python-pinyin) 处理普通话读音。应用分发原创台词及生成的录音。见[普通话配音构建脚本](Build/render-mandarin.py)。
 
 航线模拟的引擎、气流、滚行和设备音效由项目脚本合成。见 [Build/prepare-flight-effects.py](Build/prepare-flight-effects.py)。
 

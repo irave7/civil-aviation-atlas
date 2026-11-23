@@ -160,6 +160,9 @@ struct AircraftDetail: View {
     @State private var choosingConfiguration = false
     @State private var livery = AircraftLiveries.reference
     @State private var choosingLivery = false
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var palette: AtlasPalette { AtlasPalette(scheme, contrast: contrast) }
     private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
 
     var body: some View {
@@ -191,12 +194,13 @@ struct AircraftDetail: View {
             case .data:
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(profile.displayName).font(AtlasTypography.font(.largeTitle).bold())
-                            Text(profile.title).font(AtlasTypography.font(.subheadline)).foregroundStyle(.secondary)
+                        AtlasDetailMasthead(palette: palette) {
+                            Text(profile.displayName).font(AtlasTypography.font(.largeTitle, weight: .bold))
+                                .accessibilityAddTraits(.isHeader)
+                            Text(profile.title).font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                         }
-                        Text(profile.description).font(AtlasTypography.font(.body))
-                        adaptiveFacts {
+                        Text(profile.description).font(AtlasTypography.font(.body)).lineSpacing(4)
+                        AtlasAdaptiveFacts {
                             AtlasFact(label: "机身长", value: "\(profile.lengthM.formatted()) m", symbol: "arrow.left.and.right")
                             AtlasFact(label: "翼展", value: "\(profile.wingspanM.formatted()) m", symbol: "arrow.up.and.down")
                         }
@@ -206,13 +210,18 @@ struct AircraftDetail: View {
                                 Text("\(item.airline) · \(item.name)").font(AtlasTypography.font(.headline))
                                 Text(item.seats.map { "\($0.label) \($0.seatCount) 座" }.joined(separator: " · "))
                                     .font(AtlasTypography.font(.subheadline).monospacedDigit())
-                                Text(item.cabinDescription).foregroundStyle(.secondary)
+                                Text(item.cabinDescription).foregroundStyle(palette.muted)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .atlasPanel(palette)
                         }
                         SourceLinks(sources: profile.sources)
                     }
+                    .foregroundStyle(palette.ink)
                     .atlasReadingWidth()
                 }
+                .background(palette.page)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -437,12 +446,13 @@ private struct AirportOverview: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 23) {
-                VStack(alignment: .leading, spacing: 6) {
+                AtlasDetailMasthead(palette: palette) {
                     Text("\(airport.displayCode)  /  \(airport.icao)")
                         .font(palette.readout(.headline)).foregroundStyle(palette.accent)
                     Text(airport.displayName)
                         .font(AtlasTypography.font(.largeTitle).bold())
                         .accessibilityIdentifier("airport-localized-title")
+                        .accessibilityAddTraits(.isHeader)
                     Text(airport.name == airport.displayName ? airport.displayCity : airport.name)
                         .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
                         .accessibilityIdentifier("airport-original-title")
@@ -463,7 +473,7 @@ private struct AirportOverview: View {
                     }
                 }
                 if let description = airport.description { Text(description).lineSpacing(4) }
-                adaptiveFacts {
+                AtlasAdaptiveFacts {
                     AtlasFact(label: "跑道记录", value: runways.count.formatted(), symbol: "equal")
                     if let elevation = airport.elevationFt {
                         AtlasFact(label: "机场海拔", value: "\(Int((Double(elevation) * 0.3048).rounded()).formatted()) m", symbol: "mountain.2")
@@ -511,6 +521,20 @@ private struct AirportOverview: View {
             .atlasReadingWidth()
         }
         .background(palette.page)
+    }
+}
+
+private struct AtlasDetailMasthead<Content: View>: View {
+    let palette: AtlasPalette
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7, content: content)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .background(LinearGradient(colors: [palette.selection, palette.surface],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: .rect(cornerRadius: palette.corner))
     }
 }
 
@@ -599,9 +623,9 @@ private struct PanelButton: View {
             .padding(.horizontal, compact ? 8 : 15)
             .frame(minWidth: 44, minHeight: compact ? 48 : 44)
             .background(selected ? palette.selection : .clear,
-                        in: .rect(cornerRadius: palette.isDark ? 9 : 17))
+                        in: .rect(cornerRadius: 12))
             .overlay(alignment: .bottom) {
-                if selected && palette.isDark {
+                if selected {
                     Capsule().fill(palette.accent).frame(height: 2).padding(.horizontal, 8)
                 }
             }
@@ -615,10 +639,15 @@ private struct PanelButton: View {
     }
 }
 
-private func adaptiveFacts<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-    ViewThatFits(in: .horizontal) {
-        HStack(alignment: .top, spacing: 12) { content() }
-        VStack(alignment: .leading, spacing: 8) { content() }
+private struct AtlasAdaptiveFacts<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+        layout { content() }
     }
 }
 

@@ -50,6 +50,59 @@ final class FlightFavoritePickersUITests: XCTestCase {
         screenshot("收藏机场 FOC 与收藏机型 A350-900")
     }
 
+    func testFavoriteWidebodyKeepsRunwayVisibleAtBothExteriorPinchLimits() {
+        let app = launchSimulator(with: [
+            "-AtlasFavoriteIDs.aircraft", "(a350-900)",
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityMedium.rawValue
+        ])
+        XCUIDevice.shared.orientation = .portrait
+        let beijing = app.buttons["exploration-route-PEK"].firstMatch
+        let routes = app.scrollViews["flight-exploration"].firstMatch
+        XCTAssertTrue(routes.waitForExistence(timeout: 15))
+        for _ in 0..<4 where !beijing.isHittable { routes.swipeUp(velocity: .slow) }
+        tap(beijing)
+        tap(app.buttons["simulator-options"].firstMatch)
+        tap(app.buttons["simulator-choose-aircraft"].firstMatch)
+        tap(app.buttons["simulator-select-a350-900"].firstMatch)
+        tap(app.segmentedControls["simulator-camera"].buttons["机外"].firstMatch)
+        let exterior = app.descendants(matching: .any).matching(identifier: "simulator-exterior-view").firstMatch
+        let zoom = app.buttons["simulator-exterior-zoom"].firstMatch
+        let ground = app.descendants(matching: .any).matching(identifier: "simulator-ground-stage").firstMatch
+        tap(app.buttons["exploration-simulator-start"].firstMatch)
+        tap(app.buttons["simulator-rate"].firstMatch)
+        let onRunway = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            ground.exists && ground.label == "起飞滑跑"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [onRunway], timeout: 85), .completed)
+        tap(app.buttons["simulator-pause"].firstMatch)
+        XCTAssertTrue(exterior.label.contains("A350-900") && exterior.label.contains("三维机场"))
+        XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(exterior.frame))
+        let canvas = app.descendants(matching: .any).matching(identifier: "simulator-exterior-canvas").firstMatch
+        let source = app.descendants(matching: .any).matching(identifier: "simulator-airfield-source").firstMatch
+        let telemetry = app.descendants(matching: .any).matching(identifier: "simulator-exterior-telemetry").firstMatch
+        for element in [canvas, source, telemetry] { XCTAssertTrue(element.waitForExistence(timeout: 10)) }
+        XCTAssertGreaterThan(canvas.frame.height, 75)
+        XCTAssertLessThanOrEqual(telemetry.frame.maxY, canvas.frame.minY + 1)
+        XCTAssertGreaterThanOrEqual(source.frame.minY, canvas.frame.maxY - 1)
+        XCTAssertTrue(source.label.contains("OpenStreetMap"))
+
+        for (caption, scale, velocity, target): (String, CGFloat, CGFloat, String) in [
+            ("近景", 4, 3, "1.18"), ("远景", 0.20, -3, "0.72")
+        ] {
+            canvas.pinch(withScale: scale, velocity: velocity)
+            let atLimit = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                zoom.value as? String == target
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [atLimit], timeout: 12), .completed)
+            XCTAssertEqual(ground.label, "起飞滑跑")
+            let image = XCTAttachment(screenshot: canvas.screenshot())
+            image.name = "A350-900 · 跑道滑跑 · \(caption)"
+            image.lifetime = .keepAlways
+            add(image)
+        }
+        screenshot("宽体机滑跑 · 大字版完整界面")
+    }
+
     func testRepresentativeAirportChapterOpensAirport() {
         let app = launchSimulator()
         app.selectExplorationCategory("机场")

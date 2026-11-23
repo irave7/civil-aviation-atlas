@@ -1,6 +1,6 @@
 # 民航图鉴中国大陆 App Store 发布手册
 
-候选版本为 1.5（14），在现有 `com.aerodromeatlas.ipad` 应用记录下原生支持 iPhone 和 iPad，最低系统为 iOS 26 和 iPadOS 26。本候选版本尚未提交 App Store 审核。以下手续与验证由发布负责人在正式提交前留存结果。
+本地候选版本为 1.6（15），在现有 `com.aerodromeatlas.ipad` 应用记录下原生支持 iPhone 和 iPad，最低系统为 iOS 26 和 iPadOS 26。本候选版本尚未提交 App Store 审核。以下手续与验证由发布负责人在正式提交前留存结果。
 
 ## 1. 确认提交范围
 

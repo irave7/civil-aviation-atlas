@@ -36,6 +36,7 @@ if [[ "$require_signing" == --require-signed ]]; then
 fi
 
 python3 - "$app" "$build_root" <<'PY'
+import json
 import plistlib
 import re
 import sys
@@ -98,7 +99,16 @@ challenge_source = (project / "App" / "FlightChallenges.swift").read_text()
 challenge_files = {f"challenge-{origin}-{destination}.m4a" for origin, destination in
                    re.findall(r'\.init\("([A-Z]{3})", "([A-Z]{3})"', challenge_source)}
 assert len(challenge_files) >= 20, "The representative route audio list is incomplete"
-for folder, files in (("Narration", narration_files), ("FlightEffects", flight_effects),
+observation_dir = resources / "ObservationVoices"
+observations = json.loads((observation_dir / "observation-scripts.json").read_text())
+observation_ids = {f"airport-{key}" for key in re.findall(r'\.init\(id: "([A-Z]{3})"', (project / "App/FlightAirportChapters.swift").read_text())}
+observation_ids.update(f"aircraft-{key}" for key in re.findall(r'\.init\(id: "([^"]+)"', (project / "App/AtlasAircraftMissions.swift").read_text()))
+assert set(observations) == observation_ids and all(observations.values()), "Observation transcripts do not match the missions"
+observation_files = {"observation-scripts.json"} | {f"observation-{role}{key}.m4a" for key in observations for role in ("", "captain-", "story-")}
+captions = json.loads((resources / "Narration/flight-transcripts.json").read_text())
+assert {stem + ".m4a" for stem in captions} == narration_files | carrier_files | route_files | challenge_files, "Flight captions are incomplete"
+for folder, files in (("Narration", narration_files | {"flight-transcripts.json"}), ("FlightEffects", flight_effects),
+                      ("ObservationVoices", observation_files),
                       ("CarrierCabin", carrier_files), ("RouteVoices", route_files),
                       ("ChallengeVoices", challenge_files)):
     for filename in files:

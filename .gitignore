@@ -18,6 +18,8 @@ xcuserdata/
 !/Build/prepare-mainland-catalog.py
 !/Build/prepare-flight-effects.py
 !/Build/prepare-narration.py
+!/Build/prepare-flight-transcripts.py
+!/Build/render-mandarin.py
 !/Build/prepare-route-announcements.py
 !/Build/prepare-challenge-announcements.py
 !/Build/update-airport-scheduled-service.py

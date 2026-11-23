@@ -19,7 +19,7 @@ enum FlightCabinVoice: String, Identifiable, Sendable {
         init?(cue: ExplorationNarrationCue) {
             switch cue {
             case .briefing: self = .briefing
-            case .gearUp: self = .departing
+            case .taxiOut: self = .departing
             case .approach: self = .approach
             case .arrived: self = .arrived
             default: return nil

@@ -13,32 +13,86 @@ struct FlightExplorationAircraft: View {
     var flaps: FlightSimulation.Flaps = .retracted
     var showsBackdrop = true
     var altitudeMeters: Double?
-    var speedKnots: Double = 0
-    var groundDistanceMeters: Double = 0
+    var field: FlightAirfieldFrame?
+    var cockpit = false
+    var followZoom: CGFloat = 1
+    var separateSource = false
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scene: ExplorationAircraftScene?
+    @State private var loadedField: (id: String, scenery: FlightAirfieldScenery)?
 
     private var modelKey: String { "\(profile.id)|\(livery.id)" }
+    private var scenery: FlightAirfieldScenery? { loadedField?.id == field?.sceneID ? loadedField?.scenery : nil }
     private var fraction: Double { min(1, max(0, progress)) }
+    private var sourceDescription: String? {
+        if field != nil { return scenery?.label ?? "三维机场" }
+        return showsBackdrop ? "模拟景观" : nil
+    }
 
     var body: some View {
+        VStack(spacing: 0) {
+            canvas
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("飞行三维画面")
+                .accessibilityIdentifier("simulator-exterior-canvas")
+            if separateSource, let sourceDescription {
+                let palette = AtlasPalette(scheme, contrast: contrast)
+                Text(sourceDescription)
+                    .font(AtlasTypography.font(.caption2, weight: .medium))
+                    .foregroundStyle(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(palette.surface)
+                    .accessibilityIdentifier("simulator-airfield-source")
+            }
+        }
+        .clipped()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(["三维飞行外观", profile.displayName, livery.name,
+                             field == nil ? nil : "三维机场", sourceDescription].compactMap { $0 }.joined(separator: "，"))
+        .accessibilityValue(scene?.modelKey == modelKey && (field == nil || scenery != nil)
+                            ? (gearDown ? "起落架放下" : "起落架收起") : "正在载入三维模型")
+        .accessibilityIdentifier("exploration-aircraft-3d")
+        .task(id: field?.sceneID) {
+            guard let field else {
+                loadedField = nil
+                return
+            }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            loadedField = (field.sceneID, FlightAirfieldScenery(airport: field.airport, runway: field.runway, route: field.route))
+        }
+        .task(id: modelKey) {
+            guard scene?.modelKey != modelKey, let cabin = profile.configurations.first else { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            scene = ExplorationAircraftScene(
+                modelKey: modelKey,
+                model: AircraftModels.makeFlightExterior(aircraft: profile, configuration: cabin, livery: livery),
+                length: Float(profile.lengthM), span: Float(profile.wingspanM)
+            )
+        }
+    }
+
+
+    private var canvas: some View {
         GeometryReader { geometry in
             let aspect = Float(geometry.size.width / max(1, geometry.size.height))
             let drift = reduceMotion ? 0.5 : fraction
             let altitude = altitudeMeters.map { $0.isFinite ? max(0, $0) : 0 }
             ZStack {
-                if showsBackdrop {
-                    ExplorationAircraftBackdrop(progress: drift, altitudeMeters: altitude ?? 7_500 * sin(.pi * fraction),
-                                                speedKnots: speedKnots,
-                                                groundDistanceMeters: reduceMotion ? 0 : groundDistanceMeters)
+                if showsBackdrop && (field?.visibility ?? 0) < 1 {
+                    ExplorationAircraftBackdrop(progress: drift, altitudeMeters: altitude ?? 7_500 * sin(.pi * fraction))
                 }
-                if let altitude, altitude < 230 {
-                    Ellipse()
-                        .fill(.black.opacity(0.31 * (1 - altitude / 230)))
-                        .frame(width: geometry.size.width * 0.46, height: geometry.size.height * 0.14)
-                        .blur(radius: 9 + altitude * 0.025)
-                        .offset(x: geometry.size.width * 0.035, y: geometry.size.height * 0.16)
+                if let field {
+                    LinearGradient(colors: [Color(sceneryHex: 0x5085A8), Color(sceneryHex: 0xD0DBCF)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .opacity(cockpit ? 1 : field.visibility)
                         .accessibilityHidden(true)
                 }
                 if let scene, scene.modelKey == modelKey {
@@ -58,38 +112,26 @@ struct FlightExplorationAircraft: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .bottomLeading) {
-                if showsBackdrop && altitude != nil {
-                    Text("模拟景观")
-                        .font(.caption2.weight(.medium))
+                if !separateSource, let sourceDescription {
+                    Text(sourceDescription)
+                        .font(AtlasTypography.font(.caption2, weight: .medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(.black.opacity(0.66), in: .capsule)
-                        .padding(8)
-                        .accessibilityHidden(true)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+                        .accessibilityIdentifier("simulator-airfield-source")
                 }
             }
         }
         .clipped()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("三维飞行外观，\(profile.displayName)，\(livery.name)\(showsBackdrop ? "，模拟景观" : "")")
-        .accessibilityValue(scene?.modelKey == modelKey ? (gearDown ? "起落架放下" : "起落架收起") : "正在载入三维模型")
-        .accessibilityIdentifier("exploration-aircraft-3d")
-        .task(id: modelKey) {
-            guard scene?.modelKey != modelKey, let cabin = profile.configurations.first else { return }
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            scene = ExplorationAircraftScene(
-                modelKey: modelKey,
-                model: AircraftModels.makeFlightExterior(aircraft: profile, configuration: cabin, livery: livery),
-                length: Float(profile.lengthM), span: Float(profile.wingspanM)
-            )
-        }
     }
 
     private func pose(_ scene: ExplorationAircraftScene, progress: Double, aspect: Float) {
         scene.pose(progress: progress, pitch: reduceMotion ? 0 : pitch, bank: reduceMotion ? 0 : bank,
-                   gearDown: gearDown, flaps: flaps, animated: !reduceMotion, aspect: aspect)
+                   gearDown: gearDown, flaps: flaps, animated: !reduceMotion, aspect: aspect,
+                   field: field, scenery: scenery, cockpit: cockpit, zoom: Float(followZoom))
     }
 }
 
@@ -103,7 +145,10 @@ private final class ExplorationAircraftScene {
     private let exterior: FlightAircraftExterior
     private let length: Float
     private let span: Float
-    private var lastAspect: Float?
+    private weak var installedSite: Entity?
+    private var opacity: Float = 1
+    private let groundClearance: Float
+    private let framingCorners: [SIMD3<Float>]
     private static let fieldOfView: Float = 34
 
     init(modelKey: String, model: FlightAircraftExterior, length: Float, span: Float) {
@@ -111,20 +156,36 @@ private final class ExplorationAircraftScene {
         self.length = length
         self.span = span
         aircraft = model.root
+        groundClearance = max(0, -model.root.visualBounds(relativeTo: model.root).min.y)
+        // Cache each component's bounds once. Its far corners carry the current aircraft's real dimensions.
+        framingCorners = model.root.children.flatMap { part in
+            let box = part.visualBounds(relativeTo: model.root)
+            return [box.min.x, box.max.x].flatMap { x in
+                [box.min.y, box.max.y].flatMap { y in [box.min.z, box.max.z].map { SIMD3(x, y, $0) } }
+            }
+        }
         exterior = model
         camera.camera = PerspectiveCameraComponent(
-            near: 0.1, far: max(length, span) * 12, fieldOfViewInDegrees: Self.fieldOfView,
+            near: 0.3, far: 24_000, fieldOfViewInDegrees: Self.fieldOfView,
             fieldOfViewOrientation: .vertical
         )
         world.addChild(camera)
         world.addChild(aircraft)
-        addLight(from: [-4, 8, -6], intensity: 2_450, color: UIColor(red: 1, green: 0.95, blue: 0.87, alpha: 1))
+        addLight(from: [-160, 320, -240], intensity: 2_450,
+                 color: UIColor(red: 1, green: 0.95, blue: 0.87, alpha: 1), castsShadow: true)
         addLight(from: [4, 3, -5], intensity: 1_300, color: UIColor(red: 0.68, green: 0.84, blue: 1, alpha: 1))
         addLight(from: [-2, 5, 5], intensity: 1_650, color: UIColor(red: 0.69, green: 0.96, blue: 1, alpha: 1))
     }
 
     func pose(progress: Double, pitch: Double, bank: Double, gearDown: Bool,
-              flaps: FlightSimulation.Flaps, animated: Bool, aspect: Float) {
+              flaps: FlightSimulation.Flaps, animated: Bool, aspect: Float, field: FlightAirfieldFrame?,
+              scenery: FlightAirfieldScenery?, cockpit: Bool, zoom: Float) {
+        if installedSite !== scenery?.root {
+            installedSite?.removeFromParent()
+            if let scenery { world.addChild(scenery.root) }
+            installedSite = scenery?.root
+            opacity = 1
+        }
         let travel = Float(progress)
         let extent = max(length, span)
         aircraft.position = [length * (0.095 - travel * 0.19), extent * sin(.pi * travel) * 0.085, 0]
@@ -134,24 +195,55 @@ private final class ExplorationAircraftScene {
             * simd_quatf(angle: bankRadians, axis: [1, 0, 0])
         exterior.update(flaps: flaps, gearDown: gearDown, animated: animated)
 
-        guard lastAspect != aspect else { return }
-        lastAspect = aspect
-        let frustumFactor = 2 * tan(Self.fieldOfView * .pi / 360)
-        let direction = simd_normalize(SIMD3<Float>(0.84, 0.47, -0.72))
-        let lateral = simd_length(SIMD2(direction.x, direction.z))
-        let width = (abs(direction.z) * length + abs(direction.x) * span) / lateral
-        let depth = (abs(direction.x) * length + abs(direction.z) * span) / lateral
-        let height = depth * direction.y + extent * 0.19
-        let distance = max(extent * 1.18, width / (frustumFactor * max(0.28, aspect) * 0.80),
-                           height / (frustumFactor * 0.72))
-        let target: SIMD3<Float> = [0, extent * 0.024, 0]
+        aircraft.isEnabled = !cockpit
+        if let field, let site = installedSite {
+            // Keep the camera in aircraft coordinates and apply the inverse heading to the entire site.
+            let inverseHeading = simd_quatf(angle: (field.heading + 90) * .pi / 180, axis: [0, 1, 0])
+            site.orientation = inverseHeading
+            site.position = inverseHeading.act(-field.position) - [0, groundClearance, 0]
+            aircraft.position = .zero
+            let weight = cockpit ? 1 : Float(field.visibility)
+            if abs(weight - opacity) > 0.01 || (weight == 1 && weight != opacity) {
+                site.components.set(OpacityComponent(opacity: weight))
+                opacity = weight
+            }
+        }
+        if cockpit {
+            let eye = SIMD3<Float>(-length * 0.39, max(1.1, length * 0.04), 0)
+            let forward = aircraft.orientation.act(SIMD3<Float>(-1, -0.035, 0))
+            camera.look(at: eye + forward * 100, from: eye,
+                        upVector: aircraft.orientation.act([0, 1, 0]), relativeTo: world)
+            return
+        }
+        let proximity = Float(field?.visibility ?? 0)
+        let direction = simd_normalize(SIMD3<Float>(0.84, 0.47 - 0.22 * proximity, -0.72))
+        let right = simd_normalize(simd_cross([0, 1, 0], direction))
+        let up = simd_cross(direction, right)
+        let target = aircraft.position + SIMD3<Float>(0, extent * 0.04, 0)
+        // Fit wing, body, tail and gear bounds inside the actual camera frustum. The nearest point
+        // matters during rotation and banking. Only the camera moves, including while zooming.
+        let typeWeight = pow(min(2, max(0.45, extent / 40)), 0.10)
+        let coverage = min(0.82, max(0.46, 0.68 * typeWeight * zoom))
+        let vertical = tan(Self.fieldOfView * .pi / 360) * coverage
+        let horizontal = vertical * max(0.1, aspect)
+        var distance = extent * 0.60
+        for corner in framingCorners {
+            let offset = aircraft.orientation.act(corner) + aircraft.position - target
+            let front = simd_dot(offset, direction)
+            distance = max(distance, front + abs(simd_dot(offset, right)) / horizontal,
+                           front + abs(simd_dot(offset, up)) / vertical)
+        }
         camera.look(at: target, from: target + direction * distance, relativeTo: world)
     }
 
-    private func addLight(from position: SIMD3<Float>, intensity: Float, color: UIColor) {
+    private func addLight(from position: SIMD3<Float>, intensity: Float, color: UIColor, castsShadow: Bool = false) {
         let light = DirectionalLight()
         light.light.color = color
         light.light.intensity = intensity
+        if castsShadow {
+            light.shadow = .init(shadowProjection: .fixed(zNear: 10, zFar: 900, orthographicScale: max(length, span) * 2),
+                                 depthBias: 1)
+        }
         light.look(at: .zero, from: position, relativeTo: nil)
         world.addChild(light)
     }
@@ -160,14 +252,11 @@ private final class ExplorationAircraftScene {
 private struct ExplorationAircraftBackdrop: View {
     let progress: Double
     let altitudeMeters: Double
-    let speedKnots: Double
-    let groundDistanceMeters: Double
 
     var body: some View {
         Canvas(opaque: true, rendersAsynchronously: true) { context, size in
             let altitude = min(1, altitudeMeters / 9_000)
             let horizon = size.height * (0.42 + altitude * 0.21)
-            let groundWeight = max(0, 1 - altitudeMeters / 1_600)
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
                 Self.horizonSky, startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)
             ))
@@ -177,77 +266,13 @@ private struct ExplorationAircraftBackdrop: View {
                 Gradient(colors: [.white.opacity(0.01), .white.opacity(0.29), .white.opacity(0.01)]),
                 startPoint: haze.origin, endPoint: CGPoint(x: 0, y: haze.maxY)
             ))
-            if groundWeight > 0 {
-                var terrain = context
-                terrain.opacity = groundWeight
-                drawGround(terrain, size: size, top: horizon)
-            }
             drawClouds(context, size: size, opacity: 0.32 + altitude * 0.68,
                        skyline: horizon + altitude * size.height * 0.15)
         }
         .accessibilityHidden(true)
     }
 
-    private func drawGround(_ context: GraphicsContext, size: CGSize, top: CGFloat) {
-        let bottom = size.height
-        let depth = bottom - top
-        let field = CGRect(x: 0, y: top, width: size.width, height: depth)
-        let pace = (groundDistanceMeters.isFinite ? groundDistanceMeters : 0)
-            .truncatingRemainder(dividingBy: 30) / 30
-        let rolling = min(1, max(0, speedKnots.isFinite ? speedKnots / 140 : 0))
-        context.fill(Path(field), with: .linearGradient(
-            Self.grass, startPoint: field.origin, endPoint: CGPoint(x: 0, y: bottom)
-        ))
-
-        // Bands in depth keep the ground readable at small stage sizes.
-        for section in 0..<12 {
-            let fraction = (Double(section) + pace) / 12
-            let y = top + depth * fraction * fraction
-            let height = depth * fraction * 0.036
-            let strip = CGRect(x: 0, y: y, width: size.width, height: height)
-            context.fill(Path(strip), with: .color(Color(sceneryHex: 0xAFB17E).opacity(0.17 - rolling * 0.05)))
-        }
-
-        let nearCenter = size.width * 0.50
-        let farCenter = size.width * 0.52
-        let nearSpan = size.width * 0.55
-        let farSpan = nearSpan * 0.08
-        func coordinate(_ rawDepth: Double, lateral: Double) -> CGPoint {
-            let fraction = rawDepth * rawDepth
-            return CGPoint(
-                x: farCenter + (nearCenter - farCenter) * fraction + lateral * (farSpan + (nearSpan - farSpan) * fraction),
-                y: top + depth * fraction
-            )
-        }
-        func ribbon(from: Double, to: Double, left: Double, right: Double) -> Path {
-            Path { path in
-                path.move(to: coordinate(from, lateral: left))
-                path.addLine(to: coordinate(from, lateral: right))
-                path.addLine(to: coordinate(to, lateral: right))
-                path.addLine(to: coordinate(to, lateral: left))
-                path.closeSubpath()
-            }
-        }
-        context.fill(ribbon(from: 0, to: 1, left: -1.08, right: 1.08), with: .color(Color(sceneryHex: 0x818075)))
-        context.fill(ribbon(from: 0, to: 1, left: -1, right: 1), with: .linearGradient(
-            Self.pavement, startPoint: field.origin, endPoint: CGPoint(x: 0, y: bottom)
-        ))
-        for side in [-1.0, 1.0] {
-            context.fill(ribbon(from: 0, to: 1, left: side * 0.90 - 0.012, right: side * 0.90 + 0.012),
-                         with: .color(.white.opacity(0.67)))
-        }
-        for stripe in 0..<11 {
-            let start = max(0, (Double(stripe) + pace - 0.55) / 10)
-            let end = min(1, start + 0.038)
-            guard end > start else { continue }
-            context.fill(ribbon(from: start, to: end, left: -0.024, right: 0.024),
-                         with: .color(.white.opacity(0.82)))
-        }
-    }
-
     private static let horizonSky = Gradient(colors: [0x1D4F85, 0x609BC4, 0xD2E1DA, 0x628C9D].map(Color.init(sceneryHex:)))
-    private static let grass = Gradient(colors: [0x889271, 0x53694D, 0x354F43].map(Color.init(sceneryHex:)))
-    private static let pavement = Gradient(colors: [0x777C7B, 0x484F54, 0x343E42].map(Color.init(sceneryHex:)))
 
     private func drawClouds(_ context: GraphicsContext, size: CGSize, opacity: Double, skyline: CGFloat) {
         guard opacity > 0.015 else { return }

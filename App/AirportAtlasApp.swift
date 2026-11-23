@@ -80,9 +80,14 @@ struct AtlasHome: View {
         }
     }
 
+    private var homeGlobe: some View {
+        GlobeView(library: library, open: { navigate(.airport($0.id)) }, favorites: favorites,
+                  openAircraft: { navigate(.aircraft($0.id)) }, explore: { navigate(.explore) })
+    }
+
     private var phoneApp: some View {
         NavigationStack(path: $phonePath) {
-            GlobeView(library: library, open: { navigate(.airport($0.id)) })
+            homeGlobe
                 .navigationTitle(title(for: .globe))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(palette.surface, for: .navigationBar)
@@ -143,7 +148,7 @@ struct AtlasHome: View {
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             ZStack {
-                GlobeView(library: library, open: { navigate(.airport($0.id)) })
+                homeGlobe
                     .frame(width: destination == .globe ? nil : 0, height: destination == .globe ? nil : 0)
                     .clipped()
                     .opacity(destination == .globe ? 1 : 0)
@@ -196,11 +201,16 @@ struct AtlasHome: View {
                 entry("机场图鉴", symbol: "airplane.arrival", target: .airports, id: "entry-airports")
                 entry("客机图鉴", symbol: "airplane", target: .fleet, id: "entry-aircraft")
                 entry("探索", symbol: "safari", target: .explore, id: "entry-exploration")
-                entry("隐私与数据", symbol: "hand.raised", target: .privacy, id: "entry-privacy")
-                entry("触控教程", symbol: "hand.tap", target: .gestureGuide, id: "entry-gesture-guide")
                 if !isPhone { appearanceButton }
             } header: {
                 Text("浏览")
+            }
+            if query.isEmpty {
+                Section("使用与设置") {
+                    entry("隐私与数据", symbol: "hand.raised", target: .privacy, id: "entry-privacy")
+                    entry("触控教程", symbol: "hand.tap", target: .gestureGuide, id: "entry-gesture-guide")
+                    entry("数据与素材来源", symbol: "doc.text.magnifyingglass", target: .sources, id: "entry-sources")
+                }
             }
             Section(query.isEmpty ? "精选机场" : "机场搜索") {
                 ForEach(library.search(query).prefix(query.isEmpty ? 3 : 40)) { airport in
@@ -229,11 +239,9 @@ struct AtlasHome: View {
                         entry(profile.displayName, symbol: "airplane", target: .aircraft(profile.id), id: "sidebar-aircraft-\(profile.id)")
                     }
                 }
-                Section {
-                    entry("数据与素材来源", symbol: "doc.text.magnifyingglass", target: .sources, id: "entry-sources")
-                }
             }
         }
+        .accessibilityIdentifier("atlas-directory-list")
         .modifier(DirectorySearch(query: $query, isPhone: isPhone))
         .scrollContentBackground(.hidden)
         .background(palette.page)
@@ -832,17 +840,18 @@ private struct FleetDirectory: View {
                 ForEach(results) { profile in
                     Button { open(profile) } label: {
                         HStack(spacing: 20) {
-                            Image(systemName: "airplane")
-                                .font(.system(size: 33, weight: .light))
+                            Image(systemName: profile.isTwinAisle ? "airplane.circle.fill" : "airplane.circle")
+                                .font(.system(size: 32, weight: .regular))
                                 .foregroundStyle(palette.accent)
-                                .frame(width: 67)
+                                .frame(width: 46, height: 46)
+                                .background(palette.selection, in: .rect(cornerRadius: 12))
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(profile.displayName).font(AtlasTypography.font(.title3).weight(.semibold)).foregroundStyle(palette.ink)
                                 Text(profile.title)
                                     .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
-                                Text(profile.series)
-                                    .font(AtlasTypography.font(.subheadline)).foregroundStyle(palette.muted)
+                                Text("\(profile.isTwinAisle ? "双通道" : "单通道") · 翼展 \(profile.wingspanM.formatted()) 米")
+                                    .font(AtlasTypography.font(.footnote)).foregroundStyle(palette.muted)
                             }
                             Spacer()
                             Image(systemName: "chevron.right").font(AtlasTypography.font(.footnote).weight(.semibold)).foregroundStyle(palette.muted)

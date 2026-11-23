@@ -7,6 +7,7 @@ struct FlightSimulatorCockpit<Terrain: View>: View {
     let runway: String?
     let taxiing: Bool
     let showsTerrain: Bool
+    let showsAirfield: Bool
     @ViewBuilder let terrain: Terrain
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -43,7 +44,7 @@ struct FlightSimulatorCockpit<Terrain: View>: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(profile.modelName).font(.system(.headline, design: .monospaced).weight(.bold))
-                    let mode = showsTerrain ? "实景地形" : "模拟前视"
+                    let mode = showsAirfield ? "三维机场" : (showsTerrain ? "实景地形" : "模拟前视")
                     Text(runway.map { "\($0) · \(mode)" } ?? mode)
                         .font(AtlasTypography.font(.caption))
                         .foregroundStyle(.white.opacity(0.78))
@@ -62,7 +63,7 @@ struct FlightSimulatorCockpit<Terrain: View>: View {
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(profile.displayName) 驾驶舱前视")
-        .accessibilityValue(showsTerrain ? "实景地形" : "模拟前视")
+        .accessibilityValue(showsAirfield ? "三维机场" : (showsTerrain ? "实景地形" : "模拟前视"))
         .accessibilityIdentifier("simulator-cockpit-view")
     }
 }
@@ -239,24 +240,39 @@ struct FlightCockpitControls: View {
 
     private var attitudeIndicator: some View {
         VStack(spacing: 8) {
-            GeometryReader { view in
-                ZStack {
-                    VStack(spacing: 0) {
-                        Rectangle().fill(Color(red: 0.06, green: 0.34, blue: 0.66))
-                        Rectangle().fill(Color(red: 0.47, green: 0.27, blue: 0.14))
-                    }
-                    .frame(width: view.size.width * 2, height: view.size.height * 2)
-                    .rotationEffect(.degrees(-flight.effectiveBank))
-                    .offset(y: flight.effectivePitch * 1.65)
-                    Image(systemName: "line.horizontal.3.decrease")
-                        .font(.system(.title2, design: .monospaced).weight(.bold))
-                        .foregroundStyle(.yellow)
+            Canvas { context, size in
+                let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                let reach = max(size.width, size.height) * 2
+                let pitchScale = size.height / 45
+                var horizon = context
+                horizon.translateBy(x: center.x, y: center.y)
+                horizon.rotate(by: .degrees(-flight.effectiveBank))
+                horizon.translateBy(x: 0, y: flight.effectivePitch * pitchScale)
+                horizon.fill(Path(CGRect(x: -reach, y: -reach, width: reach * 2, height: reach)),
+                             with: .color(Color(red: 0.14, green: 0.37, blue: 0.56)))
+                horizon.fill(Path(CGRect(x: -reach, y: 0, width: reach * 2, height: reach)),
+                             with: .color(Color(red: 0.44, green: 0.32, blue: 0.22)))
+                var ladder = Path()
+                for angle in stride(from: -30, through: 30, by: 5) {
+                    let y = -CGFloat(angle) * pitchScale
+                    let width: CGFloat = angle == 0 ? reach : (angle.isMultiple(of: 10) ? 18 : 9)
+                    ladder.move(to: CGPoint(x: -width, y: y))
+                    ladder.addLine(to: CGPoint(x: width, y: y))
                 }
-                .frame(width: view.size.width, height: view.size.height)
-                .clipped()
+                horizon.stroke(ladder, with: .color(.white.opacity(0.85)), lineWidth: 1)
+                var wings = Path()
+                for sign: CGFloat in [-1, 1] {
+                    wings.move(to: CGPoint(x: center.x + sign * 30, y: center.y))
+                    wings.addLine(to: CGPoint(x: center.x + sign * 10, y: center.y))
+                    wings.addLine(to: CGPoint(x: center.x + sign * 6, y: center.y + 4))
+                }
+                context.stroke(wings, with: .color(.black.opacity(0.6)), lineWidth: 4.5)
+                context.stroke(wings, with: .color(.yellow), lineWidth: 2)
+                context.fill(Path(ellipseIn: CGRect(x: center.x - 2, y: center.y - 2, width: 4, height: 4)),
+                             with: .color(.yellow))
             }
-            .frame(height: 62)
-            .clipShape(.rect(cornerRadius: 5))
+            .frame(height: 82)
+            .clipShape(.rect(cornerRadius: 6))
             .accessibilityHidden(true)
             Text("\(read(flight.airspeed)) kt  ·  \(read(flight.altitude)) ft\n俯仰 \(read(flight.effectivePitch))°  ·  坡度 \(read(flight.effectiveBank))°")
                 .font(.system(.footnote, design: .monospaced))

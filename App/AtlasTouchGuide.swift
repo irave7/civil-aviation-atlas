@@ -52,7 +52,9 @@ struct AtlasTouchGuide: View {
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
             heading("使用屏幕控件", size: .title3)
+            instruction("飞行模拟 · 机外", detail: "在飞机周围双指张开或捏合，可以拉近或拉远跟拍镜头。点右上角的倍率可恢复标准视距。", symbol: "camera.viewfinder")
             instruction("拆分与缩放", detail: "点按「拆分」后可用滑杆调整部件间距，客机还可用滑杆缩放镜头。结束测距后可使用三指拆分。", symbol: "slider.horizontal.3")
+            instruction("模拟飞行的机外视角", detail: "双指张开可拉近跟拍镜头，捏合可拉远。点按右上角的倍率即可恢复标准视距。", symbol: "viewfinder")
             if DistributionPolicy.airportSiteModelsAvailable && DistributionPolicy.mapsAvailable {
                 instruction("机场平面图", detail: "双指捏合或张开缩放，双指转动可调整平面图方向。", symbol: "map")
             }

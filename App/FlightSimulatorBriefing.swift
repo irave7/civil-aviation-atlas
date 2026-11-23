@@ -31,9 +31,6 @@ struct FlightSimulatorBriefing: View {
             flightStyle
             aircraftAndSource
             runwaysAndWind
-            Text("从起飞滑跑开始，操纵飞机完成爬升、巡航、进近和着陆，再查看飞行记录。")
-                .font(AtlasTypography.font(.subheadline))
-                .foregroundStyle(palette.muted)
         }
         .frame(maxWidth: 760, alignment: .leading)
         .frame(maxWidth: .infinity)
@@ -43,26 +40,56 @@ struct FlightSimulatorBriefing: View {
 
     private var routeHeader: some View {
         let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
         return VStack(alignment: .leading, spacing: 14) {
-            title("飞行简报", size: .title2)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    briefingTitle
+                    Spacer(minLength: 0)
+                    distanceLabel
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    briefingTitle
+                    distanceLabel
+                }
+            }
+            Rectangle().fill(palette.stageMuted.opacity(0.32)).frame(height: 1)
+                .accessibilityHidden(true)
             layout {
                 endpoint(origin, role: "出发")
                 if !typeSize.isAccessibilitySize {
-                    Image(systemName: "arrow.right")
-                        .foregroundStyle(palette.accent)
+                    Image(systemName: "airplane")
+                        .font(.caption)
+                        .foregroundStyle(palette.stageAccent)
+                        .padding(.top, 27)
                         .accessibilityHidden(true)
                 }
                 endpoint(destination, role: "抵达")
             }
-            Text("机场间大圆距离 \(distance.formatted(.number.precision(.fractionLength(0)))) 公里")
-                .font(AtlasTypography.font(.subheadline))
-                .foregroundStyle(palette.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .atlasPanel(palette)
+        .background(palette.stage, in: .rect(cornerRadius: palette.corner))
+        .overlay {
+            RoundedRectangle(cornerRadius: palette.corner)
+                .strokeBorder(palette.stageAccent.opacity(0.25), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var briefingTitle: some View {
+        Text("飞行简报")
+            .font(AtlasTypography.font(.headline, weight: .semibold))
+            .foregroundStyle(palette.stageInk)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var distanceLabel: some View {
+        Text("大圆距离 \(distance.formatted(.number.precision(.fractionLength(0)))) 公里")
+            .font(AtlasTypography.font(.footnote))
+            .foregroundStyle(palette.stageMuted)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private var aircraftAndSource: some View {
@@ -139,18 +166,27 @@ struct FlightSimulatorBriefing: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(role)
                 .font(AtlasTypography.font(.caption, weight: .semibold))
-                .foregroundStyle(palette.muted)
+                .foregroundStyle(palette.stageMuted)
             Text(airport.displayCode)
-                .font(palette.readout(.title2, weight: .bold))
-                .foregroundStyle(palette.accent)
+                .font(.system(.title, design: .rounded, weight: .bold))
+                .foregroundStyle(palette.stageAccent)
             Text(airport.displayName)
-                .foregroundStyle(palette.ink)
+                .font(AtlasTypography.font(.subheadline, weight: .semibold))
+                .foregroundStyle(palette.stageInk)
+                .fixedSize(horizontal: false, vertical: true)
             if DistributionPolicy.mapsAvailable && airport.hasCoordinates {
-                Button("查看实景", systemImage: "globe.asia.australia") { showImagery(airport) }
-                    .buttonStyle(.glass)
-                    .accessibilityLabel("查看\(airport.displayName)实景")
-                    .accessibilityIdentifier("exploration-simulator-imagery-\(airport.id)")
-                    .padding(.top, 4)
+                Button {
+                    showImagery(airport)
+                } label: {
+                    Label("查看实景", systemImage: "globe.asia.australia")
+                        .font(AtlasTypography.font(.footnote, weight: .semibold))
+                        .foregroundStyle(palette.stageAccent)
+                        .frame(minHeight: 44, alignment: .leading)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("查看\(airport.displayName)实景")
+                .accessibilityIdentifier("exploration-simulator-imagery-\(airport.id)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -215,6 +251,7 @@ struct FlightSimulatorDebrief: View {
                 .accessibilityAddTraits(.isHeader)
             Text("\(destination.displayCode) · \(destination.displayName)")
                 .foregroundStyle(palette.muted)
+            if summary.samples.count > 1 { profileChart }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: typeSize.isAccessibilitySize ? 232 : 152), spacing: 10)],
                       alignment: .leading, spacing: 10) {
                 metric("模拟用时", elapsedText)
@@ -237,7 +274,6 @@ struct FlightSimulatorDebrief: View {
                 Label("模拟滑跑超出所选跑道长度", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(palette.ink)
             }
-            if summary.samples.count > 1 { profileChart }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { actions }
                 VStack(alignment: .leading, spacing: 8) { actions }
@@ -260,6 +296,11 @@ struct FlightSimulatorDebrief: View {
             }
             .pickerStyle(.segmented)
             Chart(summary.samples) { sample in
+                AreaMark(x: .value("模拟秒数", sample.elapsed),
+                         y: .value(trace.rawValue, trace == .altitude ? sample.altitude : sample.airspeed))
+                    .foregroundStyle(.linearGradient(colors: [palette.accent.opacity(0.20), palette.accent.opacity(0.02)],
+                                                     startPoint: .top, endPoint: .bottom))
+                    .accessibilityHidden(true)
                 LineMark(x: .value("模拟秒数", sample.elapsed),
                          y: .value(trace.rawValue, trace == .altitude ? sample.altitude : sample.airspeed))
                     .foregroundStyle(palette.accent)
